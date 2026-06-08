@@ -1,0 +1,44 @@
+apiVersion: nais.io/v1alpha1
+kind: Application
+metadata:
+  labels:
+    team: appsec
+  name: tpt-graph
+  namespace: appsec
+spec:
+  image: "{{ image }}"
+  port: 8080
+  replicas:
+    min: 1
+    max: 1
+    cpuThresholdPercentage: 90
+  resources:
+    limits:
+      memory: "64Mi"
+    requests:
+      cpu: "10m"
+      memory: "32Mi"
+  liveness:
+    initialDelay: 30
+    path: isalive
+  readiness:
+    initialDelay: 30
+    path: isready
+  envFrom:
+    - secret: tpt-graph
+  ingresses:
+    - https://tpt-graph.nav.no
+  azure:
+    application:
+      enabled: true
+      allowAllUsers: false
+      claims:
+        groups:
+          - id: "d633d27b-a470-4b9d-984e-85499f126e18"
+    sidecar:
+      enabled: true
+      autoLogin: true
+  accessPolicy:
+    outbound:
+      rules:
+        - application: neo4j
