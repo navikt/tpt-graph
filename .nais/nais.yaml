@@ -47,3 +47,4 @@ spec:
     outbound:
       rules:
         - application: neo4j
+        - application: whodis
