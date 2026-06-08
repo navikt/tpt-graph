@@ -32,7 +32,11 @@ func main() {
 	}
 	slog.Info("connected to neo4j", "uri", uri)
 
+	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
+
 	mux := http.NewServeMux()
+	mux.HandleFunc("/isready", ok)
+	mux.HandleFunc("/isalive", ok)
 	mux.Handle("/", handler.New(client))
 
 	addr := fmt.Sprintf(":%s", port)
