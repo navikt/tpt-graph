@@ -1,5 +1,4 @@
-# ── Build stage ──────────────────────────────────────────────────────────────
-FROM golang:1.26-alpine AS builder
+FROM cgr.dev/chainguard/go:latest AS builder
 
 WORKDIR /src
 
