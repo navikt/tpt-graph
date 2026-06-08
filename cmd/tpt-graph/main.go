@@ -10,12 +10,14 @@ import (
 
 	"tpt-graph/internal/handler"
 	"tpt-graph/internal/neo4j"
+	"tpt-graph/internal/whodis"
 )
 
 func main() {
 	uri := mustEnv("NEO4J_URI")
 	user := mustEnv("NEO4J_USER")
 	password := mustEnv("NEO4J_PASSWORD")
+	whodisURL := mustEnv("WHODIS_URL")
 	port := envOr("PORT", "8080")
 
 	client, err := neo4j.NewClient(uri, user, password)
@@ -32,12 +34,14 @@ func main() {
 	}
 	slog.Info("connected to neo4j", "uri", uri)
 
+	whodisClient := whodis.NewClient(whodisURL)
+
 	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/isready", ok)
 	mux.HandleFunc("/isalive", ok)
-	mux.Handle("/", handler.New(client))
+	mux.Handle("/", handler.New(client, whodisClient))
 
 	addr := fmt.Sprintf(":%s", port)
 	slog.Info("server listening", "addr", addr)

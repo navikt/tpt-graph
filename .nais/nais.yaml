@@ -24,6 +24,9 @@ spec:
   readiness:
     initialDelay: 30
     path: isready
+  env:
+    - name: WHODIS_URL
+      value: http://whodis
   envFrom:
     - secret: tpt-graph
   ingresses:
@@ -35,6 +38,8 @@ spec:
       claims:
         groups:
           - id: "d633d27b-a470-4b9d-984e-85499f126e18"
+          - id: "b0c13827-8451-4c52-9ed8-bdf09a2985a3"
+          - id: "5f8b7bac-c3bf-4597-a9b1-42be0c8410f8"
     sidecar:
       enabled: true
       autoLogin: true

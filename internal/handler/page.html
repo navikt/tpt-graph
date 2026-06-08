@@ -69,6 +69,9 @@
       margin-top: 2rem;
       width: 100%;
       max-width: 560px;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
     }
 
     .card {
@@ -80,6 +83,8 @@
     .card-found   { background: #eaf6ee; border: 1.5px solid #86c99a; color: #1b4d2e; }
     .card-missing { background: #fffbea; border: 1.5px solid #f0c040; color: #5a4000; }
     .card-error   { background: #fdf0f0; border: 1.5px solid #e8a0a0; color: #6b1a1a; }
+    .card-info    { background: #fff; border: 1.5px solid #dde1e7; color: #1a1a2e; }
+    .card-warn    { background: #fffbea; border: 1.5px solid #f0c040; color: #5a4000; }
 
     .card-label {
       font-size: 0.72rem;
@@ -94,11 +99,68 @@
       font-weight: 700;
       font-family: "SF Mono", "Consolas", "Menlo", monospace;
     }
+
+    .team-header {
+      display: flex;
+      align-items: baseline;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .team-name {
+      font-size: 1.05rem;
+      font-weight: 700;
+    }
+    .team-slack {
+      font-size: 0.88rem;
+      color: #0067c5;
+      font-family: "SF Mono", "Consolas", "Menlo", monospace;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    th {
+      text-align: left;
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      opacity: 0.55;
+      padding: 0 0 0.4rem;
+      border-bottom: 1.5px solid #dde1e7;
+    }
+    td {
+      padding: 0.45rem 0;
+      border-bottom: 1px solid #eef0f3;
+      vertical-align: middle;
+    }
+    tr:last-child td { border-bottom: none; }
+
+    .role-owner {
+      font-weight: 700;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #0057a8;
+    }
+    .role-member {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #666;
+    }
+    .member-email {
+      font-family: "SF Mono", "Consolas", "Menlo", monospace;
+      font-size: 0.82rem;
+      color: #555;
+    }
   </style>
 </head>
 <body>
   <h1>TittPåGraphDataTing</h1>
-  <p class="subtitle">Find the Kubernetes namespace that owns an ingress</p>
+  <p class="subtitle">Find the Kubernetes namespace and team ownership for an ingress</p>
 
   <form method="GET" action="/">
     <input
@@ -118,7 +180,45 @@
       <div class="card-label">Namespace</div>
       <div class="card-value">{{.Namespace}}</div>
     </div>
+
+    {{if .Team}}
+    <div class="card card-info">
+      <div class="team-header">
+        <span class="team-name">{{.Team.Slug}}</span>
+        <span class="team-slack">{{.Team.SlackChannel}}</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Role</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Team.Members}}
+          <tr>
+            <td>{{.Name}}</td>
+            <td><span class="member-email">{{.Email}}</span></td>
+            <td>
+              {{if eq .Role "OWNER"}}
+                <span class="role-owner">Owner</span>
+              {{else}}
+                <span class="role-member">Member</span>
+              {{end}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else if .TeamUnavailable}}
+    <div class="card card-warn">
+      Team ownership information is currently unavailable.
+    </div>
+    {{end}}
   </div>
+
   {{else if .NotFound}}
   <div class="result">
     <div class="card card-missing">

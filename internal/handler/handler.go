@@ -10,27 +10,36 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"tpt-graph/internal/whodis"
 )
 
 //go:embed page.html
 var pageTmpl string
 
-// Neo4jQuerier is the only interface the handler depends on.
+// Neo4jQuerier is the only interface the handler depends on for graph queries.
 type Neo4jQuerier interface {
 	FindNamespaceByIngress(ctx context.Context, hostname string) (string, error)
 }
 
+// WhodisClient is the interface for fetching team ownership information.
+type WhodisClient interface {
+	LookupTeam(ctx context.Context, teamSlug string) (*whodis.Team, error)
+}
+
 // Handler handles all HTTP traffic for the service.
 type Handler struct {
-	neo4j Neo4jQuerier
-	tmpl  *template.Template
+	neo4j  Neo4jQuerier
+	whodis WhodisClient
+	tmpl   *template.Template
 }
 
 // New returns an initialised Handler.
-func New(querier Neo4jQuerier) *Handler {
+func New(querier Neo4jQuerier, whodis WhodisClient) *Handler {
 	return &Handler{
-		neo4j: querier,
-		tmpl:  template.Must(template.New("page").Parse(pageTmpl)),
+		neo4j:  querier,
+		whodis: whodis,
+		tmpl:   template.Must(template.New("page").Parse(pageTmpl)),
 	}
 }
 
@@ -55,6 +64,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				data.NotFound = true
 			} else {
 				data.Namespace = ns
+
+				team, err := h.whodis.LookupTeam(ctx, ns)
+				if err != nil {
+					slog.Warn("whodis lookup failed", "namespace", ns, "err", err)
+					data.TeamUnavailable = true
+				} else {
+					data.Team = team
+				}
 			}
 		}
 	}
@@ -67,10 +84,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // pageData is the view model passed to the HTML template.
 type pageData struct {
-	Input     string
-	Namespace string
-	NotFound  bool
-	Error     string
+	Input           string
+	Namespace       string
+	NotFound        bool
+	Error           string
+	Team            *whodis.Team
+	TeamUnavailable bool
 }
 
 // extractHostname parses raw into a bare hostname (no scheme, port, or path).
