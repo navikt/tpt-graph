@@ -1,18 +1,13 @@
 FROM cgr.dev/chainguard/go:latest AS builder
-
+ENV GOOS=linux
+ENV CGO_ENABLED=0
+ENV GO111MODULE=on
+COPY . /src
 WORKDIR /src
-
-COPY go.mod go.sum ./
 RUN go mod download
-
-COPY . .
-
-RUN CGO_ENABLED=0 GOOS=linux go build \
-      -ldflags="-s -w" \
-      -o /bin/tpt-graph \
-      ./cmd/tpt-graph
+RUN go build -a -installsuffix cgo -o /bin/app ./cmd/tpt-graph
 
 FROM cgr.dev/chainguard/static:latest
-COPY --from=builder /bin/tpt-graph /bin/tpt-graph
-EXPOSE 8080
-ENTRYPOINT ["/bin/tpt-graph"]
+WORKDIR /app
+COPY --from=builder /bin/app /app/app
+ENTRYPOINT ["/app/app"]
