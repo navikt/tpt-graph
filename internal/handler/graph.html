@@ -215,20 +215,25 @@
 
       const payload = await res.json();
       const elements = payloadToElements(payload);
+      if (elements.length === 0) { expanding = false; return; }
 
-      if (elements.length > 0) {
-        cy.add(elements);
-        cy.layout({
-          name:             'cose',
-          animate:          true,
-          animationDuration: 500,
-          fit:              false,
-          randomize:        false,
-          nodeRepulsion:    12000,
-          idealEdgeLength:  150,
-          gravity:          0.25,
-        }).run();
-      }
+      // Pre-position new nodes grouped by primary label before adding to graph,
+      // so cose starts with clusters rather than a random pile.
+      const origin = node.position();
+      prePositionByLabel(elements, origin);
+
+      cy.add(elements);
+      cy.layout({
+        name:              'cose',
+        animate:           true,
+        animationDuration: 600,
+        fit:               false,
+        randomize:         false,
+        nodeRepulsion:     16000,
+        idealEdgeLength:   160,
+        gravity:           0.15,
+        numIter:           1000,
+      }).run();
     } catch (e) {
       console.error('expand failed', e);
     } finally {
@@ -350,6 +355,64 @@
     });
     return elements;
   }
+  // ── Pre-position new nodes by label group ───────────────────────────────────
+  // Groups new nodes by their primary label and places each group in a sector
+  // radiating out from the origin point. cose then settles them while keeping
+  // same-type nodes close together.
+  function prePositionByLabel(elements, origin) {
+    const nodeEls = elements.filter(e => e.group === 'nodes');
+    if (nodeEls.length === 0) return;
+
+    // Group by primary label (first label alphabetically that isn't a generic one).
+    const groups = {};
+    nodeEls.forEach(el => {
+      const label = primaryLabel(el.data.labels || []);
+      if (!groups[label]) groups[label] = [];
+      groups[label].push(el);
+    });
+
+    const groupList = Object.entries(groups);
+    const numGroups = groupList.length;
+    const radius    = 220; // distance from origin to group centre
+    const spread    = 80;  // distance between nodes within a group
+
+    groupList.forEach(([, nodes], groupIdx) => {
+      // Evenly distribute groups around a circle centred on the expanded node.
+      const angle = (2 * Math.PI * groupIdx) / numGroups - Math.PI / 2;
+      const cx = origin.x + radius * Math.cos(angle);
+      const cy = origin.y + radius * Math.sin(angle);
+
+      nodes.forEach((el, nodeIdx) => {
+        // Arrange nodes within the group in a small grid around the group centre.
+        const cols  = Math.ceil(Math.sqrt(nodes.length));
+        const col   = nodeIdx % cols;
+        const row   = Math.floor(nodeIdx / cols);
+        const ox    = (col - (cols - 1) / 2) * spread;
+        const oy    = (row - (Math.ceil(nodes.length / cols) - 1) / 2) * spread;
+        el.position = { x: cx + ox, y: cy + oy };
+      });
+    });
+  }
+
+  // Returns the most specific application-level label from a list,
+  // mirroring the priority list in graphapi.go.
+  function primaryLabel(labels) {
+    const priority = [
+      'GitHubRepository','GitHubUser','GitHubTeam','GitHubActionsSecret',
+      'GitHubActionsVariable','GitHubWorkflow','GitHubEnvironment',
+      'GitHubDependabotAlert','GitHubPersonalAccessToken',
+      'NaisApp','NaisTeam','NaisMember','NaisDeployment','NaisTenant',
+      'KubernetesNamespace','KubernetesIngress','KubernetesPod',
+      'KubernetesContainer','KubernetesSecret','KubernetesServiceAccount',
+      'KubernetesCluster','KubernetesNode','KubernetesService',
+      'KubernetesRole','KubernetesClusterRole',
+      'KubernetesRoleBinding','KubernetesClusterRoleBinding',
+    ];
+    const set = new Set(labels);
+    for (const p of priority) { if (set.has(p)) return p; }
+    return labels[0] || 'Unknown';
+  }
+
 })();
 </script>
 {{end}}

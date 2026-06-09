@@ -68,12 +68,15 @@ func GraphSeed(ctx context.Context, drv neodriver.DriverWithContext, repo string
 	for id := range nodes {
 		nodeIDs = append(nodeIDs, id)
 	}
-	degrees, err := batchDegrees(ctx, drv, nodeIDs)
+	// For the seed, all returned nodes are "known" after this call — pass
+	// nodeIDs as both the query targets and the known set so hasMore reflects
+	// neighbours beyond this initial payload.
+	counts, err := batchUnexploredCounts(ctx, drv, nodeIDs, nodeIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	return buildPayload(nodes, rels, degrees), nil
+	return buildPayload(nodes, rels, counts), nil
 }
 
 // GraphExpand returns all immediate neighbours of a node, excluding already-known nodes.
@@ -130,16 +133,22 @@ func GraphExpand(ctx context.Context, drv neodriver.DriverWithContext, elementID
 	for id := range nodes {
 		nodeIDs = append(nodeIDs, id)
 	}
-	degrees, err := batchDegrees(ctx, drv, nodeIDs)
+	// knownIDs includes both the expanded node and all pre-existing nodes passed
+	// by the client — so hasMore only fires for truly unexplored neighbours.
+	allKnown := append(knownIDs, elementID)
+	allKnown = append(allKnown, nodeIDs...)
+	counts, err := batchUnexploredCounts(ctx, drv, nodeIDs, allKnown)
 	if err != nil {
 		return nil, err
 	}
 
-	return buildPayload(nodes, rels, degrees), nil
+	return buildPayload(nodes, rels, counts), nil
 }
 
-// batchDegrees returns the relationship count for each node in a single query.
-func batchDegrees(ctx context.Context, drv neodriver.DriverWithContext, ids []string) (map[string]int64, error) {
+// batchUnexploredCounts returns, for each node ID, the count of neighbours
+// that are NOT in the knownIDs set. This is used to set hasMore correctly —
+// a node has more to explore only if it has neighbours the client hasn't seen.
+func batchUnexploredCounts(ctx context.Context, drv neodriver.DriverWithContext, ids []string, knownIDs []string) (map[string]int64, error) {
 	if len(ids) == 0 {
 		return map[string]int64{}, nil
 	}
@@ -149,25 +158,27 @@ func batchDegrees(ctx context.Context, drv neodriver.DriverWithContext, ids []st
 	result, err := session.Run(ctx, `
 		UNWIND $ids AS eid
 		MATCH (n) WHERE elementId(n) = eid
-		RETURN elementId(n) AS id, count{ (n)-[]-() } AS degree`,
-		map[string]any{"ids": ids},
+		MATCH (n)-[]-(neighbour)
+		WHERE NOT elementId(neighbour) IN $knownIds
+		RETURN elementId(n) AS id, count(DISTINCT neighbour) AS unexplored`,
+		map[string]any{"ids": ids, "knownIds": knownIDs},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("degree query: %w", err)
+		return nil, fmt.Errorf("unexplored count query: %w", err)
 	}
 
-	degrees := make(map[string]int64, len(ids))
+	counts := make(map[string]int64, len(ids))
 	for result.Next(ctx) {
 		rec := result.Record()
 		id, _ := rec.Get("id")
-		deg, _ := rec.Get("degree")
+		cnt, _ := rec.Get("unexplored")
 		if idStr, ok := id.(string); ok {
-			if degInt, ok := deg.(int64); ok {
-				degrees[idStr] = degInt
+			if cntInt, ok := cnt.(int64); ok {
+				counts[idStr] = cntInt
 			}
 		}
 	}
-	return degrees, result.Err()
+	return counts, result.Err()
 }
 
 // buildPayload converts raw Neo4j nodes and relationships into a GraphPayload.
