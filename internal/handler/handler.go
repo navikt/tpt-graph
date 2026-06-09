@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"html/template"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -14,8 +15,11 @@ import (
 	"tpt-graph/internal/whodis"
 )
 
-//go:embed layout.html home.html search.html dependency.html
+//go:embed layout.html home.html search.html dependency.html graph.html
 var templateFiles embed.FS
+
+//go:embed all:static
+var staticFiles embed.FS
 
 // Neo4jQuerier is the only interface the handler depends on for graph queries.
 type Neo4jQuerier interface {
@@ -46,15 +50,30 @@ func New(querier Neo4jQuerier, whodis WhodisClient) *Handler {
 	}
 }
 
+// StaticHandler returns an http.Handler that serves embedded static assets.
+func StaticHandler() http.Handler {
+	sub, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		panic(err)
+	}
+	return http.StripPrefix("/static/", http.FileServer(http.FS(sub)))
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/search":
 		h.handleSearch(w, r)
 	case "/dependency":
 		h.handleDependency(w, r)
+	case "/graph":
+		h.handleGraph(w, r)
 	default:
 		h.handleHome(w, r)
 	}
+}
+
+func (h *Handler) handleGraph(w http.ResponseWriter, r *http.Request) {
+	render(w, h.templates["graph"], pageData{ActiveTab: "graph"})
 }
 
 func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -219,6 +238,7 @@ func mustParseTemplates() map[string]*template.Template {
 		"home":       "home.html",
 		"search":     "search.html",
 		"dependency": "dependency.html",
+		"graph":      "graph.html",
 	}
 	result := make(map[string]*template.Template, len(pairs))
 	for name, contentFile := range pairs {

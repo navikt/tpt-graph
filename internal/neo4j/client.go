@@ -7,6 +7,8 @@ import (
 	"time"
 
 	neodriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+
+	"tpt-graph/internal/graphapi"
 )
 
 // DependencyUsage is a single row returned by FindDependencyUsages.
@@ -249,4 +251,14 @@ func (c *Client) FindLastSync(ctx context.Context) ([]ModuleSync, error) {
 	}
 
 	return syncs, nil
+}
+
+// GraphSeed returns the initial subgraph for a GitHub repository name.
+func (c *Client) GraphSeed(ctx context.Context, repo string) (*graphapi.GraphPayload, error) {
+	return graphapi.GraphSeed(ctx, c.drv, repo)
+}
+
+// GraphExpand returns the immediate neighbours of a node by element ID.
+func (c *Client) GraphExpand(ctx context.Context, elementID string, knownIDs []string) (*graphapi.GraphPayload, error) {
+	return graphapi.GraphExpand(ctx, c.drv, elementID, knownIDs)
 }

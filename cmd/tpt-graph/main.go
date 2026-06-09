@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"tpt-graph/internal/config"
+	"tpt-graph/internal/graphapi"
 	"tpt-graph/internal/handler"
 	"tpt-graph/internal/neo4j"
 	"tpt-graph/internal/whodis"
@@ -49,6 +50,8 @@ func main() {
 	mux.HandleFunc("/isready", ok)
 	mux.HandleFunc("/isalive", ok)
 	mux.Handle("/metrics", promhttp.Handler())
+	mux.Handle("/static/", handler.StaticHandler())
+	mux.Handle("/api/graph/", graphapi.NewHandler(client))
 	mux.Handle("/", handler.New(client, whodisClient))
 
 	server := &http.Server{

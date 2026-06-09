@@ -1,0 +1,322 @@
+{{define "content"}}
+<style>
+  .graph-wrap {
+    display: flex;
+    gap: 0;
+    height: calc(100vh - 56px - 6rem);
+    min-height: 500px;
+  }
+  #cy {
+    flex: 1;
+    background: #1a1a2e;
+    border-radius: 9px 0 0 9px;
+    border: 1.5px solid #2a2a4a;
+  }
+  #sidebar {
+    width: 300px;
+    background: #fff;
+    border: 1.5px solid #dde1e7;
+    border-left: none;
+    border-radius: 0 9px 9px 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  #sidebar-empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #aaa;
+    font-size: 0.82rem;
+    padding: 1rem;
+    text-align: center;
+  }
+  #sidebar-content { display: none; padding: 1rem; }
+  #sidebar-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    opacity: 0.5;
+    margin-bottom: 0.25rem;
+  }
+  #sidebar-caption {
+    font-size: 1rem;
+    font-weight: 700;
+    margin-bottom: 1rem;
+    word-break: break-all;
+  }
+  #sidebar-props {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.25rem 0.75rem;
+    font-size: 0.78rem;
+  }
+  .prop-key {
+    font-weight: 600;
+    color: #666;
+    white-space: nowrap;
+  }
+  .prop-val {
+    color: #1a1a2e;
+    word-break: break-all;
+  }
+  .prop-val.null { color: #bbb; font-style: italic; }
+  #graph-error {
+    display: none;
+    margin-top: 1rem;
+  }
+  .graph-hint {
+    font-size: 0.78rem;
+    color: #888;
+    margin-top: 0.75rem;
+  }
+</style>
+
+<h2>Graph explorer</h2>
+
+<form id="graph-form" style="margin-bottom:1rem;">
+  <input type="text" id="repo-input" name="repo" placeholder="tpt-graph" autocomplete="off" spellcheck="false" />
+  <button type="submit">Explore</button>
+</form>
+<p class="graph-hint">Click a node to see its properties. Nodes with a dashed border have unexplored neighbours — click to expand.</p>
+
+<div id="graph-error" class="card card-error"></div>
+
+<div class="graph-wrap">
+  <div id="cy"></div>
+  <div id="sidebar">
+    <div id="sidebar-empty">Select a node to inspect its properties</div>
+    <div id="sidebar-content">
+      <div id="sidebar-label"></div>
+      <div id="sidebar-caption"></div>
+      <dl id="sidebar-props"></dl>
+    </div>
+  </div>
+</div>
+
+<script src="/static/cytoscape.min.js"></script>
+<script>
+(function () {
+  const cy = cytoscape({
+    container: document.getElementById('cy'),
+    style: [
+      {
+        selector: 'node',
+        style: {
+          'label': 'data(caption)',
+          'background-color': 'data(color)',
+          'color': '#fff',
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'font-size': '9px',
+          'font-family': 'SF Mono, Consolas, Menlo, monospace',
+          'text-wrap': 'wrap',
+          'text-max-width': '80px',
+          'width': 50,
+          'height': 50,
+          'border-width': 0,
+          'border-color': '#fff',
+        }
+      },
+      {
+        selector: 'node[?hasMore]',
+        style: {
+          'border-width': 2.5,
+          'border-style': 'dashed',
+          'border-color': '#fff',
+        }
+      },
+      {
+        selector: 'node.expanded',
+        style: {
+          'border-width': 0,
+        }
+      },
+      {
+        selector: 'node:selected',
+        style: {
+          'border-width': 3,
+          'border-style': 'solid',
+          'border-color': '#fff',
+          'width': 60,
+          'height': 60,
+        }
+      },
+      {
+        selector: 'edge',
+        style: {
+          'label': 'data(type)',
+          'font-size': '7px',
+          'color': '#ccc',
+          'font-family': 'SF Mono, Consolas, Menlo, monospace',
+          'curve-style': 'bezier',
+          'target-arrow-shape': 'triangle',
+          'target-arrow-color': '#555',
+          'line-color': '#444',
+          'text-background-color': '#1a1a2e',
+          'text-background-opacity': 1,
+          'text-background-padding': '2px',
+          'width': 1.5,
+        }
+      }
+    ],
+    layout: { name: 'grid' },
+    userZoomingEnabled: true,
+    userPanningEnabled: true,
+  });
+
+  const expandedNodes = new Set();
+
+  // ── Sidebar ────────────────────────────────────────────────────────────────
+  cy.on('tap', 'node', function (evt) {
+    const node = evt.target;
+    const data = node.data();
+
+    document.getElementById('sidebar-empty').style.display = 'none';
+    document.getElementById('sidebar-content').style.display = 'block';
+    document.getElementById('sidebar-label').textContent = (data.labels || []).join(', ');
+    document.getElementById('sidebar-caption').textContent = data.caption || data.id;
+
+    const dl = document.getElementById('sidebar-props');
+    dl.innerHTML = '';
+    const props = data.properties || {};
+    Object.entries(props).sort(([a], [b]) => a.localeCompare(b)).forEach(([k, v]) => {
+      const dt = document.createElement('dt');
+      dt.className = 'prop-key';
+      dt.textContent = k;
+      const dd = document.createElement('dd');
+      if (v === null || v === undefined) {
+        dd.className = 'prop-val null';
+        dd.textContent = 'null';
+      } else if (Array.isArray(v)) {
+        dd.className = 'prop-val';
+        dd.textContent = v.join(', ') || '(empty)';
+      } else {
+        dd.className = 'prop-val';
+        dd.textContent = String(v);
+      }
+      dl.appendChild(dt);
+      dl.appendChild(dd);
+    });
+  });
+
+  // ── Expand on click ────────────────────────────────────────────────────────
+  cy.on('tap', 'node', async function (evt) {
+    const node = evt.target;
+    const id = node.data('id');
+
+    if (expandedNodes.has(id)) return;
+    if (!node.data('hasMore')) return;
+
+    expandedNodes.add(id);
+    node.addClass('expanded');
+
+    const knownIds = cy.nodes().map(n => n.data('id')).join(',');
+    const url = `/api/graph/expand?id=${encodeURIComponent(id)}&known=${encodeURIComponent(knownIds)}`;
+
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const payload = await res.json();
+
+      const elements = payloadToElements(payload);
+      if (elements.length === 0) return;
+
+      cy.add(elements);
+
+      // Run layout only on new nodes, keeping existing ones in place.
+      const newNodes = cy.nodes().filter(n => !expandedNodes.has(n.data('id')) && n.data('id') !== id);
+      cy.layout({
+        name: 'cose',
+        animate: true,
+        animationDuration: 400,
+        fit: false,
+        randomize: false,
+        nodeRepulsion: 8000,
+        eles: newNodes,
+      }).run();
+
+    } catch (e) {
+      console.error('expand failed', e);
+    }
+  });
+
+  // ── Form submit ─────────────────────────────────────────────────────────────
+  document.getElementById('graph-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const repo = document.getElementById('repo-input').value.trim();
+    if (!repo) return;
+
+    const errEl = document.getElementById('graph-error');
+    errEl.style.display = 'none';
+
+    cy.elements().remove();
+    expandedNodes.clear();
+    document.getElementById('sidebar-empty').style.display = 'flex';
+    document.getElementById('sidebar-content').style.display = 'none';
+
+    try {
+      const res = await fetch(`/api/graph/seed?repo=${encodeURIComponent(repo)}`);
+      if (res.status === 404) {
+        errEl.textContent = `No repository found with name "${repo}".`;
+        errEl.style.display = 'block';
+        return;
+      }
+      if (!res.ok) {
+        errEl.textContent = 'Graph query failed — please try again.';
+        errEl.style.display = 'block';
+        return;
+      }
+
+      const payload = await res.json();
+      cy.add(payloadToElements(payload));
+      cy.layout({
+        name: 'cose',
+        animate: true,
+        animationDuration: 500,
+        nodeRepulsion: 10000,
+        idealEdgeLength: 120,
+        fit: true,
+      }).run();
+
+    } catch (e) {
+      errEl.textContent = 'Unexpected error — see console for details.';
+      errEl.style.display = 'block';
+      console.error(e);
+    }
+  });
+
+  // ── Helpers ─────────────────────────────────────────────────────────────────
+  function payloadToElements(payload) {
+    const elements = [];
+    (payload.nodes || []).forEach(n => {
+      if (cy.getElementById(n.id).length > 0) return; // already in graph
+      elements.push({
+        group: 'nodes',
+        data: {
+          id: n.id,
+          caption: n.caption,
+          color: n.color,
+          hasMore: n.hasMore,
+          labels: n.labels,
+          properties: n.properties,
+        }
+      });
+    });
+    (payload.edges || []).forEach(e => {
+      if (cy.getElementById(e.id).length > 0) return;
+      // Only add edge if both endpoints are in the graph.
+      if (cy.getElementById(e.source).length === 0) return;
+      if (cy.getElementById(e.target).length === 0) return;
+      elements.push({
+        group: 'edges',
+        data: { id: e.id, source: e.source, target: e.target, type: e.type }
+      });
+    });
+    return elements;
+  }
+})();
+</script>
+{{end}}
