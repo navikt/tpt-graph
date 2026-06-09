@@ -96,15 +96,18 @@ func (c *Client) FindNamespaceByIngress(ctx context.Context, hostname string) (s
 	return "", nil
 }
 
-// FindDependencyUsages returns all running apps that depend on the given package name,
-// version, and ecosystem.
+// FindDependencyUsages returns all running apps that depend on the given package.
+// version and ecosystem are optional — pass empty string to omit each filter.
 func (c *Client) FindDependencyUsages(ctx context.Context, name, version, ecosystem string) ([]DependencyUsage, error) {
 	session := c.drv.NewSession(ctx, neodriver.SessionConfig{AccessMode: neodriver.AccessModeRead})
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx,
-		`MATCH (dep:Dependency {name: $name, version: $version, ecosystem: $ecosystem})
-		      <-[:REQUIRES]-(repo:GitHubRepository)
+		`MATCH (dep:Dependency)
+		 WHERE dep.name = $name
+		   AND ($version  = '' OR dep.version  = $version)
+		   AND ($ecosystem = '' OR dep.ecosystem = $ecosystem)
+		 MATCH (dep)<-[:REQUIRES]-(repo:GitHubRepository)
 		      <-[:DEPLOYED_FROM]-(d:NaisDeployment)
 		      <-[:ACTIVE_DEPLOYMENT]-(app:NaisApp)
 		      -[:RUNS_IMAGE]->(container:KubernetesContainer)

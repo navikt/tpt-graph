@@ -174,7 +174,7 @@ func (h *Handler) handleDependency(w http.ResponseWriter, r *http.Request) {
 	data.DepVersion = strings.TrimSpace(r.URL.Query().Get("version"))
 	data.DepEcosystem = strings.TrimSpace(r.URL.Query().Get("ecosystem"))
 
-	if data.DepName != "" && data.DepVersion != "" && data.DepEcosystem != "" {
+	if data.DepName != "" {
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
 

@@ -1,12 +1,28 @@
 {{define "content"}}
 <h2>Dependency usage</h2>
 
+<p class="page-desc">
+  Find all Kubernetes applications currently running with a specific dependency version.
+  Results reflect active deployments tracked by Cartography across all clusters.
+</p>
+
 <form method="GET" action="/dependency">
   <input type="text" name="name"      placeholder="Package name"  value="{{.DepName}}"      autocomplete="off" spellcheck="false" />
   <input type="text" name="version"   placeholder="Version"       value="{{.DepVersion}}"   autocomplete="off" spellcheck="false" />
-  <input type="text" name="ecosystem" placeholder="Ecosystem"     value="{{.DepEcosystem}}" autocomplete="off" spellcheck="false" />
+  <input type="text" name="ecosystem" placeholder="Ecosystem (npm, pip, maven, go…)" value="{{.DepEcosystem}}" autocomplete="off" spellcheck="false" />
   <button type="submit">Look up</button>
 </form>
+
+<div class="examples">
+  <span class="examples-label">Examples</span>
+  <a class="example-link" href="/dependency?name=boto3&version=1.9.11&ecosystem=pip">boto3 1.9.11 · pip</a>
+  <a class="example-link" href="/dependency?name=cryptography&version=2.2.2&ecosystem=pip">cryptography 2.2.2 · pip</a>
+  <a class="example-link" href="/dependency?name=org.slf4j%3Aslf4j-api&version=1.7.24&ecosystem=maven">org.slf4j:slf4j-api 1.7.24 · maven</a>
+  <a class="example-link" href="/dependency?name=github.com%2Fgo-jose%2Fgo-jose%2Fv4&version=4.0.1&ecosystem=go">go-jose/v4 4.0.1 · go</a>
+  <a class="example-link" href="/dependency?name=golang.org%2Fx%2Fcrypto&version=0.32.0&ecosystem=go">golang.org/x/crypto 0.32.0 · go</a>
+  <a class="example-link" href="/dependency?name=handlebars&version=4.7.8&ecosystem=npm">handlebars 4.7.8 · npm</a>
+  <a class="example-link" href="/dependency?name=%40babel%2Fcode-frame&version=7.29.0&ecosystem=npm">@babel/code-frame 7.29.0 · npm</a>
+</div>
 
 {{if .DepUsages}}
 <div class="results">
