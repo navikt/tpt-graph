@@ -35,6 +35,22 @@ func (m ModuleSync) FormattedTime() string {
 	return m.LastSync.UTC().Format("2006-01-02 15:04 UTC")
 }
 
+// StatusColor returns "green", "yellow", or "red" based on how stale the sync is.
+func (m ModuleSync) StatusColor() string {
+	if m.LastSync.IsZero() {
+		return "red"
+	}
+	age := time.Since(m.LastSync)
+	switch {
+	case age < 24*time.Hour:
+		return "green"
+	case age < 72*time.Hour:
+		return "yellow"
+	default:
+		return "red"
+	}
+}
+
 // ShortImage returns the image name and tag without the registry/repository prefix.
 // e.g. "europe-north1-docker.pkg.dev/nais-management-233d/aap/aap-api:abc1234" → "aap-api:abc1234"
 func (d DependencyUsage) ShortImage() string {
