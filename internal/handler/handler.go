@@ -22,6 +22,7 @@ type Neo4jQuerier interface {
 	FindNamespaceByIngress(ctx context.Context, hostname string) (string, error)
 	FindNamespaceByPath(ctx context.Context, path string) ([]string, error)
 	FindDependencyUsages(ctx context.Context, name, version, ecosystem string) ([]neo4j.DependencyUsage, error)
+	FindLastSync(ctx context.Context) ([]neo4j.ModuleSync, error)
 }
 
 // WhodisClient is the interface for fetching team ownership information.
@@ -57,7 +58,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
-	render(w, h.templates["home"], pageData{})
+	data := pageData{}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	syncs, err := h.neo4j.FindLastSync(ctx)
+	if err != nil {
+		slog.Warn("failed to fetch last sync times", "err", err)
+	}
+	data.ModuleSyncs = syncs
+
+	render(w, h.templates["home"], data)
 }
 
 // handleSearch dispatches to ingress-by-hostname or ingress-by-path based on
@@ -220,6 +232,9 @@ func mustParseTemplates() map[string]*template.Template {
 // pageData is the unified view model passed to all templates.
 type pageData struct {
 	ActiveTab string
+
+	// Home
+	ModuleSyncs []neo4j.ModuleSync
 
 	// Search (ingress ownership — hostname or path)
 	SearchInput     string

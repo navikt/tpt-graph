@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	neodriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -16,6 +17,20 @@ type DependencyUsage struct {
 	RunningImage   string
 	DeployedCommit string
 	DeployedAt     string
+}
+
+// ModuleSync holds the last sync timestamp for a single Cartography module.
+type ModuleSync struct {
+	Module   string
+	LastSync time.Time
+}
+
+// FormattedTime returns the sync time as a readable UTC string, or "unknown" if zero.
+func (m ModuleSync) FormattedTime() string {
+	if m.LastSync.IsZero() {
+		return "unknown"
+	}
+	return m.LastSync.UTC().Format("2006-01-02 15:04 UTC")
 }
 
 // ShortImage returns the image name and tag without the registry/repository prefix.
@@ -182,4 +197,56 @@ func stringField(rec *neodriver.Record, key string) string {
 	}
 	s, _ := val.(string)
 	return s
+}
+
+// FindLastSync returns the most recent lastupdated timestamp per Cartography module.
+func (c *Client) FindLastSync(ctx context.Context) ([]ModuleSync, error) {
+	session := c.drv.NewSession(ctx, neodriver.SessionConfig{AccessMode: neodriver.AccessModeRead})
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx,
+		`UNWIND [
+		   {module: 'nais',       label: 'NaisApp'},
+		   {module: 'github',     label: 'GitHubRepository'},
+		   {module: 'kubernetes', label: 'KubernetesIngress'}
+		 ] AS m
+		 CALL {
+		   WITH m
+		   MATCH (n) WHERE m.label IN labels(n)
+		   RETURN max(n.lastupdated) AS ts
+		 }
+		 RETURN m.module AS module, datetime({epochSeconds: ts}) AS last_sync
+		 ORDER BY last_sync DESC`,
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("last sync query failed: %w", err)
+	}
+
+	var syncs []ModuleSync
+	for result.Next(ctx) {
+		rec := result.Record()
+		module := stringField(rec, "module")
+
+		val, ok := rec.Get("last_sync")
+		if !ok || val == nil {
+			syncs = append(syncs, ModuleSync{Module: module})
+			continue
+		}
+		// The Neo4j driver returns timezone-aware datetime values as time.Time
+		// and LocalDateTime values as neodriver.LocalDateTime.
+		var t time.Time
+		switch v := val.(type) {
+		case time.Time:
+			t = v
+		case neodriver.LocalDateTime:
+			t = v.Time()
+		}
+		syncs = append(syncs, ModuleSync{Module: module, LastSync: t})
+	}
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("result iteration: %w", err)
+	}
+
+	return syncs, nil
 }

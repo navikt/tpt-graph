@@ -9,18 +9,30 @@
 
 <h3 style="font-size:0.88rem; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; opacity:0.55; margin: 2rem 0 0.75rem;">Current data sources</h3>
 <ul style="list-style:none; display:flex; flex-direction:column; gap:0.5rem; max-width:560px;">
+
+  {{range .ModuleSyncs}}
   <li style="display:flex; align-items:center; gap:0.75rem; font-size:0.92rem; color:#1a1a2e;">
     <span style="width:8px; height:8px; border-radius:50%; background:#0067c5; flex-shrink:0;"></span>
-    <strong>GitHub</strong> — repositories, dependencies, commits & muuch more
+    <span>
+      <strong style="text-transform:capitalize;">{{.Module}}</strong>
+      <span style="font-size:0.78rem; color:#888; margin-left:0.4rem;">last synced {{.FormattedTime}}</span>
+    </span>
+  </li>
+  {{else}}
+  <li style="display:flex; align-items:center; gap:0.75rem; font-size:0.92rem; color:#1a1a2e;">
+    <span style="width:8px; height:8px; border-radius:50%; background:#0067c5; flex-shrink:0;"></span>
+    <strong>GitHub</strong>
   </li>
   <li style="display:flex; align-items:center; gap:0.75rem; font-size:0.92rem; color:#1a1a2e;">
     <span style="width:8px; height:8px; border-radius:50%; background:#0067c5; flex-shrink:0;"></span>
-    <strong>Kubernetes</strong> — clusters, namespaces, ingresses, running containers etc..
+    <strong>Kubernetes</strong>
   </li>
   <li style="display:flex; align-items:center; gap:0.75rem; font-size:0.92rem; color:#1a1a2e;">
     <span style="width:8px; height:8px; border-radius:50%; background:#0067c5; flex-shrink:0;"></span>
-    <strong>Nais</strong> — applications, teams, users and deployments
+    <strong>Nais</strong>
   </li>
+  {{end}}
+
   <li style="display:flex; align-items:center; gap:0.75rem; font-size:0.92rem; color:#888;">
     <span style="width:8px; height:8px; border-radius:50%; background:#ccc; flex-shrink:0;"></span>
     <em>More to come</em>
@@ -41,4 +53,3 @@
   navikt/tpt-graph
 </a>
 {{end}}
-
