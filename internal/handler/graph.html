@@ -1,23 +1,43 @@
 {{define "content"}}
 <style>
+  /* Override main max-width for the graph page */
+  main { max-width: 100% !important; padding: 0 1.5rem; }
+
+  .graph-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem 0 0.75rem;
+    flex-wrap: wrap;
+  }
+  .graph-toolbar h2 { margin: 0; }
+  .graph-toolbar form { margin: 0; }
+  .graph-hint {
+    font-size: 0.78rem;
+    color: #888;
+    padding-bottom: 0.75rem;
+  }
+  #graph-error { display: none; margin-bottom: 0.75rem; }
+
   .graph-wrap {
     display: flex;
-    gap: 0;
-    height: calc(100vh - 56px - 6rem);
-    min-height: 500px;
+    height: calc(100vh - 56px - 120px);
+    min-height: 600px;
+    border-radius: 9px;
+    overflow: hidden;
+    border: 1.5px solid #2a2a4a;
   }
+
   #cy {
     flex: 1;
     background: #1a1a2e;
-    border-radius: 9px 0 0 9px;
-    border: 1.5px solid #2a2a4a;
   }
+
   #sidebar {
-    width: 300px;
+    width: 320px;
+    flex-shrink: 0;
     background: #fff;
-    border: 1.5px solid #dde1e7;
-    border-left: none;
-    border-radius: 0 9px 9px 0;
+    border-left: 1.5px solid #dde1e7;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -29,69 +49,60 @@
     justify-content: center;
     color: #aaa;
     font-size: 0.82rem;
-    padding: 1rem;
+    padding: 1.5rem;
     text-align: center;
+    line-height: 1.6;
   }
-  #sidebar-content { display: none; padding: 1rem; }
+  #sidebar-content { display: none; padding: 1.25rem; }
   #sidebar-label {
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.07em;
-    opacity: 0.5;
-    margin-bottom: 0.25rem;
+    letter-spacing: 0.08em;
+    color: #888;
+    margin-bottom: 0.2rem;
   }
   #sidebar-caption {
     font-size: 1rem;
     font-weight: 700;
-    margin-bottom: 1rem;
+    margin-bottom: 1.25rem;
     word-break: break-all;
-  }
-  #sidebar-props {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 0.25rem 0.75rem;
-    font-size: 0.78rem;
-  }
-  .prop-key {
-    font-weight: 600;
-    color: #666;
-    white-space: nowrap;
-  }
-  .prop-val {
     color: #1a1a2e;
-    word-break: break-all;
+    line-height: 1.3;
   }
-  .prop-val.null { color: #bbb; font-style: italic; }
-  #graph-error {
-    display: none;
-    margin-top: 1rem;
-  }
-  .graph-hint {
+  .prop-row {
+    display: grid;
+    grid-template-columns: minmax(80px, auto) 1fr;
+    gap: 0.2rem 0.75rem;
+    align-items: baseline;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid #f0f2f5;
     font-size: 0.78rem;
-    color: #888;
-    margin-top: 0.75rem;
   }
+  .prop-row:last-child { border-bottom: none; }
+  .prop-key { font-weight: 600; color: #666; white-space: nowrap; }
+  .prop-val { color: #1a1a2e; word-break: break-all; }
+  .prop-val.null-val { color: #bbb; font-style: italic; }
 </style>
 
-<h2>Graph explorer</h2>
-
-<form id="graph-form" style="margin-bottom:1rem;">
-  <input type="text" id="repo-input" name="repo" placeholder="tpt-graph" autocomplete="off" spellcheck="false" />
-  <button type="submit">Explore</button>
-</form>
+<div class="graph-toolbar">
+  <h2 style="white-space:nowrap;">Graph explorer</h2>
+  <form id="graph-form">
+    <input type="text" id="repo-input" name="repo" placeholder="tpt-graph" autocomplete="off" spellcheck="false" style="min-width:220px;" />
+    <button type="submit">Explore</button>
+  </form>
+</div>
 <p class="graph-hint">Click a node to see its properties. Nodes with a dashed border have unexplored neighbours — click to expand.</p>
-
 <div id="graph-error" class="card card-error"></div>
 
 <div class="graph-wrap">
   <div id="cy"></div>
   <div id="sidebar">
-    <div id="sidebar-empty">Select a node to inspect its properties</div>
+    <div id="sidebar-empty">Select a node<br>to inspect its properties</div>
     <div id="sidebar-content">
       <div id="sidebar-label"></div>
       <div id="sidebar-caption"></div>
-      <dl id="sidebar-props"></dl>
+      <div id="sidebar-props"></div>
     </div>
   </div>
 </div>
@@ -99,31 +110,37 @@
 <script src="/static/cytoscape.min.js"></script>
 <script>
 (function () {
+  'use strict';
+
+  // ── Cytoscape instance ──────────────────────────────────────────────────────
   const cy = cytoscape({
     container: document.getElementById('cy'),
     style: [
       {
         selector: 'node',
         style: {
-          'label': 'data(caption)',
-          'background-color': 'data(color)',
-          'color': '#fff',
-          'text-valign': 'center',
-          'text-halign': 'center',
-          'font-size': '9px',
-          'font-family': 'SF Mono, Consolas, Menlo, monospace',
-          'text-wrap': 'wrap',
-          'text-max-width': '80px',
-          'width': 50,
-          'height': 50,
-          'border-width': 0,
-          'border-color': '#fff',
+          'label':           'data(caption)',
+          'background-color':'data(color)',
+          'color':           '#fff',
+          'text-valign':     'center',
+          'text-halign':     'center',
+          'font-size':       '11px',
+          'font-weight':     'bold',
+          'font-family':     'system-ui, sans-serif',
+          'text-wrap':       'wrap',
+          'text-max-width':  '90px',
+          'width':           70,
+          'height':          70,
+          'border-width':    0,
+          'border-color':    '#fff',
+          'text-outline-width': 1,
+          'text-outline-color': 'data(color)',
         }
       },
       {
         selector: 'node[?hasMore]',
         style: {
-          'border-width': 2.5,
+          'border-width': 3,
           'border-style': 'dashed',
           'border-color': '#fff',
         }
@@ -131,115 +148,91 @@
       {
         selector: 'node.expanded',
         style: {
-          'border-width': 0,
+          'border-style': 'solid',
+          'border-width':  2,
+          'border-color':  'rgba(255,255,255,0.4)',
         }
       },
       {
         selector: 'node:selected',
         style: {
-          'border-width': 3,
-          'border-style': 'solid',
-          'border-color': '#fff',
-          'width': 60,
-          'height': 60,
+          'border-width':  4,
+          'border-style':  'solid',
+          'border-color':  '#fff',
+          'width':         84,
+          'height':        84,
         }
       },
       {
         selector: 'edge',
         style: {
-          'label': 'data(type)',
-          'font-size': '7px',
-          'color': '#ccc',
-          'font-family': 'SF Mono, Consolas, Menlo, monospace',
-          'curve-style': 'bezier',
-          'target-arrow-shape': 'triangle',
-          'target-arrow-color': '#555',
-          'line-color': '#444',
-          'text-background-color': '#1a1a2e',
-          'text-background-opacity': 1,
-          'text-background-padding': '2px',
-          'width': 1.5,
+          'label':                    'data(type)',
+          'font-size':                '9px',
+          'color':                    '#ccc',
+          'font-family':              'system-ui, sans-serif',
+          'curve-style':              'bezier',
+          'target-arrow-shape':       'triangle',
+          'target-arrow-color':       '#666',
+          'line-color':               '#444',
+          'text-background-color':    '#1a1a2e',
+          'text-background-opacity':  1,
+          'text-background-padding':  '3px',
+          'width':                    1.5,
         }
       }
     ],
     layout: { name: 'grid' },
-    userZoomingEnabled: true,
-    userPanningEnabled: true,
+    userZoomingEnabled:  true,
+    userPanningEnabled:  true,
+    minZoom: 0.1,
+    maxZoom: 4,
   });
 
+  // ── State ───────────────────────────────────────────────────────────────────
   const expandedNodes = new Set();
+  let expanding = false; // prevent concurrent expands
 
-  // ── Sidebar ────────────────────────────────────────────────────────────────
-  cy.on('tap', 'node', function (evt) {
+  // ── Single unified tap handler ──────────────────────────────────────────────
+  cy.on('tap', 'node', async function (evt) {
     const node = evt.target;
     const data = node.data();
 
-    document.getElementById('sidebar-empty').style.display = 'none';
-    document.getElementById('sidebar-content').style.display = 'block';
-    document.getElementById('sidebar-label').textContent = (data.labels || []).join(', ');
-    document.getElementById('sidebar-caption').textContent = data.caption || data.id;
+    // Always update sidebar.
+    showSidebar(data);
 
-    const dl = document.getElementById('sidebar-props');
-    dl.innerHTML = '';
-    const props = data.properties || {};
-    Object.entries(props).sort(([a], [b]) => a.localeCompare(b)).forEach(([k, v]) => {
-      const dt = document.createElement('dt');
-      dt.className = 'prop-key';
-      dt.textContent = k;
-      const dd = document.createElement('dd');
-      if (v === null || v === undefined) {
-        dd.className = 'prop-val null';
-        dd.textContent = 'null';
-      } else if (Array.isArray(v)) {
-        dd.className = 'prop-val';
-        dd.textContent = v.join(', ') || '(empty)';
-      } else {
-        dd.className = 'prop-val';
-        dd.textContent = String(v);
-      }
-      dl.appendChild(dt);
-      dl.appendChild(dd);
-    });
-  });
+    // Expand if eligible.
+    if (!data.hasMore || expandedNodes.has(data.id) || expanding) return;
 
-  // ── Expand on click ────────────────────────────────────────────────────────
-  cy.on('tap', 'node', async function (evt) {
-    const node = evt.target;
-    const id = node.data('id');
-
-    if (expandedNodes.has(id)) return;
-    if (!node.data('hasMore')) return;
-
-    expandedNodes.add(id);
+    expanding = true;
+    expandedNodes.add(data.id);
     node.addClass('expanded');
 
-    const knownIds = cy.nodes().map(n => n.data('id')).join(',');
-    const url = `/api/graph/expand?id=${encodeURIComponent(id)}&known=${encodeURIComponent(knownIds)}`;
-
     try {
+      const knownIds = cy.nodes().map(n => n.data('id')).join(',');
+      const url = `/api/graph/expand?id=${encodeURIComponent(data.id)}&known=${encodeURIComponent(knownIds)}`;
       const res = await fetch(url);
-      if (!res.ok) return;
+      if (!res.ok) { expanding = false; return; }
+
       const payload = await res.json();
-
       const elements = payloadToElements(payload);
-      if (elements.length === 0) return;
 
-      cy.add(elements);
-
-      // Run layout only on new nodes, keeping existing ones in place.
-      const newNodes = cy.nodes().filter(n => !expandedNodes.has(n.data('id')) && n.data('id') !== id);
-      cy.layout({
-        name: 'cose',
-        animate: true,
-        animationDuration: 400,
-        fit: false,
-        randomize: false,
-        nodeRepulsion: 8000,
-        eles: newNodes,
-      }).run();
-
+      if (elements.length > 0) {
+        cy.add(elements);
+        cy.layout({
+          name:             'cose',
+          animate:          true,
+          animationDuration: 500,
+          fit:              false,
+          randomize:        false,
+          nodeRepulsion:    12000,
+          idealEdgeLength:  150,
+          gravity:          0.25,
+        }).run();
+      }
     } catch (e) {
       console.error('expand failed', e);
+    } finally {
+      expanding = false;
     }
   });
 
@@ -251,11 +244,9 @@
 
     const errEl = document.getElementById('graph-error');
     errEl.style.display = 'none';
-
     cy.elements().remove();
     expandedNodes.clear();
-    document.getElementById('sidebar-empty').style.display = 'flex';
-    document.getElementById('sidebar-content').style.display = 'none';
+    hideSidebar();
 
     try {
       const res = await fetch(`/api/graph/seed?repo=${encodeURIComponent(repo)}`);
@@ -273,12 +264,13 @@
       const payload = await res.json();
       cy.add(payloadToElements(payload));
       cy.layout({
-        name: 'cose',
-        animate: true,
-        animationDuration: 500,
-        nodeRepulsion: 10000,
-        idealEdgeLength: 120,
-        fit: true,
+        name:             'breadthfirst',
+        animate:          true,
+        animationDuration: 600,
+        directed:         true,
+        fit:              true,
+        padding:          60,
+        spacingFactor:    1.75,
       }).run();
 
     } catch (e) {
@@ -288,31 +280,66 @@
     }
   });
 
-  // ── Helpers ─────────────────────────────────────────────────────────────────
+  // ── Sidebar helpers ─────────────────────────────────────────────────────────
+  function showSidebar(data) {
+    document.getElementById('sidebar-empty').style.display   = 'none';
+    document.getElementById('sidebar-content').style.display = 'block';
+    document.getElementById('sidebar-label').textContent     = (data.labels || []).join(' · ');
+    document.getElementById('sidebar-caption').textContent   = data.caption || data.id;
+
+    const container = document.getElementById('sidebar-props');
+    container.innerHTML = '';
+    const props = data.properties || {};
+    Object.entries(props)
+      .filter(([, v]) => v !== null && v !== undefined && v !== '')
+      .sort(([a], [b]) => a.localeCompare(b))
+      .forEach(([k, v]) => {
+        const row = document.createElement('div');
+        row.className = 'prop-row';
+
+        const key = document.createElement('span');
+        key.className = 'prop-key';
+        key.textContent = k;
+
+        const val = document.createElement('span');
+        val.className = 'prop-val';
+        val.textContent = Array.isArray(v) ? (v.join(', ') || '(empty)') : String(v);
+
+        row.appendChild(key);
+        row.appendChild(val);
+        container.appendChild(row);
+      });
+  }
+
+  function hideSidebar() {
+    document.getElementById('sidebar-empty').style.display   = 'flex';
+    document.getElementById('sidebar-content').style.display = 'none';
+  }
+
+  // ── Graph payload → Cytoscape elements ─────────────────────────────────────
   function payloadToElements(payload) {
     const elements = [];
     (payload.nodes || []).forEach(n => {
-      if (cy.getElementById(n.id).length > 0) return; // already in graph
+      if (cy.getElementById(n.id).length > 0) return;
       elements.push({
         group: 'nodes',
-        data: {
-          id: n.id,
-          caption: n.caption,
-          color: n.color,
-          hasMore: n.hasMore,
-          labels: n.labels,
+        data:  {
+          id:         n.id,
+          caption:    n.caption,
+          color:      n.color,
+          hasMore:    n.hasMore,
+          labels:     n.labels,
           properties: n.properties,
         }
       });
     });
     (payload.edges || []).forEach(e => {
       if (cy.getElementById(e.id).length > 0) return;
-      // Only add edge if both endpoints are in the graph.
       if (cy.getElementById(e.source).length === 0) return;
       if (cy.getElementById(e.target).length === 0) return;
       elements.push({
         group: 'edges',
-        data: { id: e.id, source: e.source, target: e.target, type: e.type }
+        data:  { id: e.id, source: e.source, target: e.target, type: e.type }
       });
     });
     return elements;
