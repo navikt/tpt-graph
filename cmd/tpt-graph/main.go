@@ -2,67 +2,81 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"tpt-graph/internal/config"
 	"tpt-graph/internal/handler"
 	"tpt-graph/internal/neo4j"
 	"tpt-graph/internal/whodis"
 )
 
 func main() {
-	uri := mustEnv("NEO4J_URI")
-	user := mustEnv("NEO4J_USER")
-	password := mustEnv("NEO4J_PASSWORD")
-	whodisURL := mustEnv("WHODIS_URL")
-	port := envOr("PORT", "8080")
+	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(log)
 
-	client, err := neo4j.NewClient(uri, user, password)
+	cfg := config.Load()
+
+	client, err := neo4j.NewClient(cfg.Neo4jURI, cfg.Neo4jUser, cfg.Neo4jPassword)
 	if err != nil {
-		slog.Error("failed to create neo4j client", "err", err)
+		log.Error("failed to create neo4j client", "err", err)
 		os.Exit(1)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := client.VerifyConnectivity(ctx); err != nil {
-		slog.Error("neo4j connectivity check failed", "err", err)
+	connCtx, connCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer connCancel()
+	if err := client.VerifyConnectivity(connCtx); err != nil {
+		log.Error("neo4j connectivity check failed", "err", err)
 		os.Exit(1)
 	}
-	slog.Info("connected to neo4j", "uri", uri)
+	log.Info("connected to neo4j", "uri", cfg.Neo4jURI)
 
-	whodisClient := whodis.NewClient(whodisURL)
+	whodisClient := whodis.NewClient(cfg.WhodisURL)
 
 	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/isready", ok)
 	mux.HandleFunc("/isalive", ok)
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.Handle("/", handler.New(client, whodisClient))
 
-	addr := fmt.Sprintf(":%s", port)
-	slog.Info("server listening", "addr", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		slog.Error("server stopped", "err", err)
-		os.Exit(1)
+	server := &http.Server{
+		Addr:              fmt.Sprintf(":%s", cfg.Port),
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
-}
 
-func mustEnv(key string) string {
-	v := os.Getenv(key)
-	if v == "" {
-		slog.Error("required environment variable not set", "key", key)
-		os.Exit(1)
-	}
-	return v
-}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+	go func() {
+		log.Info("server listening", "addr", server.Addr)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("server failed", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Info("shutting down")
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Error("shutdown failed", "err", err)
 	}
-	return fallback
+
+	client.Close(context.Background())
 }
