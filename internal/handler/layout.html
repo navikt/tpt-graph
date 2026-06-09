@@ -55,6 +55,10 @@
       padding: 0 1.5rem;
     }
 
+    main.wide {
+      max-width: 1200px;
+    }
+
     h2 {
       font-size: 1.25rem;
       font-weight: 700;
@@ -140,8 +144,11 @@
       border-bottom: 1.5px solid #dde1e7;
       white-space: nowrap;
     }
-    td { padding: 0.4rem 0.75rem 0.4rem 0; border-bottom: 1px solid #eef0f3; vertical-align: middle; }
+    td { padding: 0.4rem 0.75rem 0.4rem 0; border-bottom: 1px solid #eef0f3; vertical-align: middle; white-space: nowrap; }
     tr:last-child td { border-bottom: none; }
+
+    .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    td.wrap { white-space: normal; }
 
     .mono        { font-family: "SF Mono", "Consolas", "Menlo", monospace; font-size: 0.8rem; color: #444; }
     .role-owner  { font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: #0057a8; }
@@ -157,7 +164,7 @@
       <a href="/dependency" {{if eq .ActiveTab "dependency"}}class="active"{{end}}>Dependency usage</a>
     </nav>
   </header>
-  <main>
+  <main {{if eq .ActiveTab "dependency"}}class="wide"{{end}}>
     {{template "content" .}}
   </main>
 </body>

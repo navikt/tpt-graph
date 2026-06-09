@@ -15,23 +15,25 @@
       {{len .DepUsages}} result{{if gt (len .DepUsages) 1}}s{{end}} for
       <strong>{{.DepName}}@{{.DepVersion}}</strong> ({{.DepEcosystem}})
     </p>
-    <table>
-      <thead>
-        <tr><th>Cluster</th><th>Namespace</th><th>App</th><th>Image</th><th>Commit</th><th>Deployed at</th></tr>
-      </thead>
-      <tbody>
-        {{range .DepUsages}}
-        <tr>
-          <td><span class="mono">{{.Cluster}}</span></td>
-          <td><span class="mono">{{.Namespace}}</span></td>
-          <td>{{.App}}</td>
-          <td><span class="mono">{{.RunningImage}}</span></td>
-          <td><span class="mono">{{.DeployedCommit}}</span></td>
-          <td><span class="mono">{{.DeployedAt}}</span></td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Cluster</th><th>Namespace</th><th>App</th><th>Image</th><th>Commit</th><th>Deployed at</th></tr>
+        </thead>
+        <tbody>
+          {{range .DepUsages}}
+          <tr>
+            <td><span class="mono">{{.Cluster}}</span></td>
+            <td><span class="mono">{{.Namespace}}</span></td>
+            <td><span class="mono">{{.App}}</span></td>
+            <td><span class="mono" title="{{.RunningImage}}">{{.ShortImage}}</span></td>
+            <td><span class="mono" title="{{.DeployedCommit}}">{{.ShortCommit}}</span></td>
+            <td><span class="mono">{{.DeployedAt}}</span></td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
 

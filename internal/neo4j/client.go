@@ -3,6 +3,7 @@ package neo4j
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	neodriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
@@ -15,6 +16,23 @@ type DependencyUsage struct {
 	RunningImage   string
 	DeployedCommit string
 	DeployedAt     string
+}
+
+// ShortImage returns the image name and tag without the registry/repository prefix.
+// e.g. "europe-north1-docker.pkg.dev/nais-management-233d/aap/aap-api:abc1234" → "aap-api:abc1234"
+func (d DependencyUsage) ShortImage() string {
+	if i := strings.LastIndex(d.RunningImage, "/"); i >= 0 {
+		return d.RunningImage[i+1:]
+	}
+	return d.RunningImage
+}
+
+// ShortCommit returns the first 7 characters of the commit SHA.
+func (d DependencyUsage) ShortCommit() string {
+	if len(d.DeployedCommit) > 7 {
+		return d.DeployedCommit[:7]
+	}
+	return d.DeployedCommit
 }
 
 // Client wraps the Neo4j driver with application-level query methods.
@@ -92,7 +110,7 @@ func (c *Client) FindDependencyUsages(ctx context.Context, name, version, ecosys
 		      -[:RUNS_IMAGE]->(container:KubernetesContainer)
 		      <-[:RESOURCE]-(cluster:KubernetesCluster)
 		 MATCH (ns:KubernetesNamespace)-[:CONTAINS]->(container)
-		 RETURN
+		 RETURN DISTINCT
 		   cluster.name    AS cluster,
 		   ns.name         AS namespace,
 		   app.name        AS app,
