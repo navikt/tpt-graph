@@ -125,7 +125,34 @@ func (c *Client) FindDependencyUsages(ctx context.Context, name, version, ecosys
 	return usages, nil
 }
 
-// stringField safely extracts a string value from a record field.
+// FindNamespaceByPath returns the distinct namespaces of all ingresses whose
+// rules contain the given path fragment.
+func (c *Client) FindNamespaceByPath(ctx context.Context, path string) ([]string, error) {
+	session := c.drv.NewSession(ctx, neodriver.SessionConfig{AccessMode: neodriver.AccessModeRead})
+	defer session.Close(ctx)
+
+	result, err := session.Run(ctx,
+		`MATCH (ing:KubernetesIngress)
+		 WHERE ing.rules CONTAINS $path
+		 RETURN DISTINCT ing.namespace AS namespace
+		 ORDER BY namespace`,
+		map[string]any{"path": path},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("path query failed: %w", err)
+	}
+
+	var namespaces []string
+	for result.Next(ctx) {
+		namespaces = append(namespaces, stringField(result.Record(), "namespace"))
+	}
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("result iteration: %w", err)
+	}
+
+	return namespaces, nil
+}
+
 // Returns an empty string if the field is absent or not a string.
 func stringField(rec *neodriver.Record, key string) string {
 	val, ok := rec.Get(key)

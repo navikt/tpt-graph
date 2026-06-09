@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"embed"
-	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -15,12 +14,13 @@ import (
 	"tpt-graph/internal/whodis"
 )
 
-//go:embed layout.html home.html ingress.html dependency.html
+//go:embed layout.html home.html search.html dependency.html
 var templateFiles embed.FS
 
 // Neo4jQuerier is the only interface the handler depends on for graph queries.
 type Neo4jQuerier interface {
 	FindNamespaceByIngress(ctx context.Context, hostname string) (string, error)
+	FindNamespaceByPath(ctx context.Context, path string) ([]string, error)
 	FindDependencyUsages(ctx context.Context, name, version, ecosystem string) ([]neo4j.DependencyUsage, error)
 }
 
@@ -47,8 +47,8 @@ func New(querier Neo4jQuerier, whodis WhodisClient) *Handler {
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
-	case "/ingress":
-		h.handleIngress(w, r)
+	case "/search":
+		h.handleSearch(w, r)
 	case "/dependency":
 		h.handleDependency(w, r)
 	default:
@@ -60,41 +60,111 @@ func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 	render(w, h.templates["home"], pageData{})
 }
 
-// handleIngress resolves a namespace (and team ownership) from an ingress URL.
-func (h *Handler) handleIngress(w http.ResponseWriter, r *http.Request) {
-	data := pageData{ActiveTab: "ingress"}
-	input := strings.TrimSpace(r.URL.Query().Get("ingress"))
-	data.IngressInput = input
+// handleSearch dispatches to ingress-by-hostname or ingress-by-path based on
+// what the user typed:
+//   - Valid http/https URL with no path (or just "/")  → hostname query
+//   - Valid http/https URL with a real path            → path query using that path
+//   - Starts with "/"                                  → path query directly
+//   - Anything else                                    → validation error
+func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
+	data := pageData{ActiveTab: "search"}
+	input := strings.TrimSpace(r.URL.Query().Get("q"))
+	data.SearchInput = input
 
 	if input != "" {
-		hostname, err := extractHostname(input)
-		if err != nil {
-			data.IngressError = err.Error()
+		if strings.HasPrefix(input, "/") {
+			h.runPathSearch(r, &data, input)
 		} else {
-			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-			defer cancel()
-
-			ns, err := h.neo4j.FindNamespaceByIngress(ctx, hostname)
-			if err != nil {
-				slog.Error("neo4j query failed", "err", err)
-				data.IngressError = "Database query failed — please try again later."
-			} else if ns == "" {
-				data.IngressNotFound = true
-			} else {
-				data.Namespace = ns
-
-				team, err := h.whodis.LookupTeam(ctx, ns)
-				if err != nil {
-					slog.Warn("whodis lookup failed", "namespace", ns, "err", err)
-					data.TeamUnavailable = true
-				} else {
-					data.Team = team
-				}
-			}
+			h.runURLSearch(r, &data, input)
 		}
 	}
 
-	render(w, h.templates["ingress"], data)
+	render(w, h.templates["search"], data)
+}
+
+// runURLSearch parses a full URL and dispatches to hostname or path query.
+func (h *Handler) runURLSearch(r *http.Request, data *pageData, raw string) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		data.SearchError = "Invalid input — enter a URL (https://example.nav.no) or a path (/my/path)."
+		return
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		data.SearchError = "URL scheme must be http or https."
+		return
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		data.SearchError = "URL must not contain query parameters or fragments."
+		return
+	}
+
+	path := u.Path
+	if path == "" || path == "/" {
+		// No meaningful path — use hostname query.
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		h.queryByHostname(ctx, data, u.Hostname())
+	} else {
+		// URL contains a real path — use path query.
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		h.queryByPath(ctx, data, path)
+	}
+}
+
+// runPathSearch runs a path query for an input that already starts with "/".
+func (h *Handler) runPathSearch(r *http.Request, data *pageData, path string) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	h.queryByPath(ctx, data, path)
+}
+
+// queryByHostname looks up the namespace (and team) for a given hostname.
+func (h *Handler) queryByHostname(ctx context.Context, data *pageData, hostname string) {
+	data.SearchMode = "hostname"
+	ns, err := h.neo4j.FindNamespaceByIngress(ctx, hostname)
+	if err != nil {
+		slog.Error("neo4j ingress query failed", "err", err)
+		data.SearchError = "Database query failed — please try again later."
+		return
+	}
+	if ns == "" {
+		data.SearchNotFound = true
+		return
+	}
+	data.Namespace = ns
+	h.lookupTeam(ctx, data, ns)
+}
+
+// queryByPath looks up namespace(s) for a given path fragment.
+func (h *Handler) queryByPath(ctx context.Context, data *pageData, path string) {
+	data.SearchMode = "path"
+	namespaces, err := h.neo4j.FindNamespaceByPath(ctx, path)
+	if err != nil {
+		slog.Error("neo4j path query failed", "err", err)
+		data.SearchError = "Database query failed — please try again later."
+		return
+	}
+	switch len(namespaces) {
+	case 0:
+		data.SearchNotFound = true
+	case 1:
+		data.Namespace = namespaces[0]
+		h.lookupTeam(ctx, data, namespaces[0])
+	default:
+		data.PathMatchCount = len(namespaces)
+	}
+}
+
+// lookupTeam fetches whodis team data for a namespace, setting TeamUnavailable on error.
+func (h *Handler) lookupTeam(ctx context.Context, data *pageData, namespace string) {
+	team, err := h.whodis.LookupTeam(ctx, namespace)
+	if err != nil {
+		slog.Warn("whodis lookup failed", "namespace", namespace, "err", err)
+		data.TeamUnavailable = true
+		return
+	}
+	data.Team = team
 }
 
 // handleDependency finds all apps that use a given dependency name/version/ecosystem.
@@ -122,7 +192,7 @@ func (h *Handler) handleDependency(w http.ResponseWriter, r *http.Request) {
 	render(w, h.templates["dependency"], data)
 }
 
-// render executes the named template set and writes the response.
+// render executes the layout template and writes the response.
 func render(w http.ResponseWriter, tmpl *template.Template, data pageData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
@@ -135,7 +205,7 @@ func render(w http.ResponseWriter, tmpl *template.Template, data pageData) {
 func mustParseTemplates() map[string]*template.Template {
 	pairs := map[string]string{
 		"home":       "home.html",
-		"ingress":    "ingress.html",
+		"search":     "search.html",
 		"dependency": "dependency.html",
 	}
 	result := make(map[string]*template.Template, len(pairs))
@@ -151,11 +221,13 @@ func mustParseTemplates() map[string]*template.Template {
 type pageData struct {
 	ActiveTab string
 
-	// Ingress lookup
-	IngressInput    string
+	// Search (ingress ownership — hostname or path)
+	SearchInput     string
+	SearchMode      string // "hostname" or "path"
+	SearchNotFound  bool
+	SearchError     string
 	Namespace       string
-	IngressNotFound bool
-	IngressError    string
+	PathMatchCount  int
 	Team            *whodis.Team
 	TeamUnavailable bool
 
@@ -166,23 +238,4 @@ type pageData struct {
 	DepUsages    []neo4j.DependencyUsage
 	DepNotFound  bool
 	DepError     string
-}
-
-// extractHostname parses raw into a bare hostname (no scheme, port, or path).
-// Returns an error if raw is not a valid http/https URL or contains a path beyond "/".
-func extractHostname(raw string) (string, error) {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return "", fmt.Errorf("invalid URL — expected format: https://sikkerhet.nav.no")
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", fmt.Errorf("URL scheme must be http or https")
-	}
-	if u.Path != "" && u.Path != "/" {
-		return "", fmt.Errorf("URL must not contain a path (max: https://example.nav.no/)")
-	}
-	if u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("URL must not contain query parameters or fragments")
-	}
-	return u.Hostname(), nil
 }
