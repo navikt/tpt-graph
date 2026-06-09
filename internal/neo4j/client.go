@@ -219,51 +219,46 @@ func stringField(rec *neodriver.Record, key string) string {
 
 // FindLastSync returns the most recent lastupdated timestamp per Cartography module.
 func (c *Client) FindLastSync(ctx context.Context) ([]ModuleSync, error) {
-	session := c.drv.NewSession(ctx, neodriver.SessionConfig{AccessMode: neodriver.AccessModeRead})
-	defer session.Close(ctx)
-
-	result, err := session.Run(ctx,
-		`UNWIND [
-		   {module: 'nais',       label: 'NaisApp'},
-		   {module: 'github',     label: 'GitHubRepository'},
-		   {module: 'kubernetes', label: 'KubernetesIngress'}
-		 ] AS m
-		 CALL {
-		   WITH m
-		   MATCH (n) WHERE m.label IN labels(n)
-		   RETURN max(n.lastupdated) AS ts
-		 }
-		 RETURN m.module AS module, datetime({epochSeconds: ts}) AS last_sync
-		 ORDER BY last_sync DESC`,
-		nil,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("last sync query failed: %w", err)
+	modules := []struct {
+		module string
+		label  string
+	}{
+		{"nais", "NaisApp"},
+		{"github", "GitHubRepository"},
+		{"kubernetes", "KubernetesIngress"},
 	}
 
 	var syncs []ModuleSync
-	for result.Next(ctx) {
-		rec := result.Record()
-		module := stringField(rec, "module")
+	for _, m := range modules {
+		session := c.drv.NewSession(ctx, neodriver.SessionConfig{AccessMode: neodriver.AccessModeRead})
+		result, err := session.Run(ctx,
+			`MATCH (n:`+m.label+`) RETURN max(n.lastupdated) AS ts`,
+			nil,
+		)
+		if err != nil {
+			_ = session.Close(ctx)
+			return nil, fmt.Errorf("last sync query for %s: %w", m.module, err)
+		}
 
-		val, ok := rec.Get("last_sync")
-		if !ok || val == nil {
-			syncs = append(syncs, ModuleSync{Module: module})
-			continue
-		}
-		// The Neo4j driver returns timezone-aware datetime values as time.Time
-		// and LocalDateTime values as neodriver.LocalDateTime.
 		var t time.Time
-		switch v := val.(type) {
-		case time.Time:
-			t = v
-		case neodriver.LocalDateTime:
-			t = v.Time()
+		if result.Next(ctx) {
+			val, ok := result.Record().Get("ts")
+			if ok && val != nil {
+				switch v := val.(type) {
+				case int64:
+					t = time.Unix(v, 0)
+				case float64:
+					t = time.Unix(int64(v), 0)
+				case time.Time:
+					t = v
+				case neodriver.LocalDateTime:
+					t = v.Time()
+				}
+			}
 		}
-		syncs = append(syncs, ModuleSync{Module: module, LastSync: t})
-	}
-	if err := result.Err(); err != nil {
-		return nil, fmt.Errorf("result iteration: %w", err)
+		_ = result.Err()
+		_ = session.Close(ctx)
+		syncs = append(syncs, ModuleSync{Module: m.module, LastSync: t})
 	}
 
 	return syncs, nil

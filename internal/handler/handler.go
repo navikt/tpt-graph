@@ -84,9 +84,10 @@ func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 
 	syncs, err := h.neo4j.FindLastSync(ctx)
 	if err != nil {
-		slog.Warn("failed to fetch last sync times", "err", err)
+		slog.Error("failed to fetch last sync times", "err", err)
+	} else {
+		data.ModuleSyncs = syncs
 	}
-	data.ModuleSyncs = syncs
 
 	render(w, h.templates["home"], data)
 }
