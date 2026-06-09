@@ -20,7 +20,6 @@ jobs:
         id: docker-push
         with:
           team: appsec
-          salsa: false
       - uses: nais/deploy/actions/deploy@961addd1e4d4211f1a7333ada5fde85f7c9aa5b7 # ratchet:nais/deploy/actions/deploy@v2
         env:
           RESOURCE: .nais/nais.yaml

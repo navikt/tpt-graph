@@ -1,0 +1,61 @@
+{{define "content"}}
+<h2>Ingress ownership</h2>
+
+<form method="GET" action="/ingress">
+  <input
+    type="text"
+    name="ingress"
+    placeholder="https://sikkerhet.nav.no"
+    value="{{.IngressInput}}"
+    autocomplete="off"
+    spellcheck="false"
+  />
+  <button type="submit">Look up</button>
+</form>
+
+{{if .Namespace}}
+<div class="results">
+  <div class="card card-found">
+    <div class="card-label">Namespace</div>
+    <div class="card-value">{{.Namespace}}</div>
+  </div>
+
+  {{if .Team}}
+  <div class="card card-info">
+    <div class="team-header">
+      <span class="team-name">{{.Team.Slug}}</span>
+      <span class="team-slack">{{.Team.SlackChannel}}</span>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Email</th><th>Role</th></tr>
+      </thead>
+      <tbody>
+        {{range .Team.Members}}
+        <tr>
+          <td>{{.Name}}</td>
+          <td><span class="mono">{{.Email}}</span></td>
+          <td>
+            {{if eq .Role "OWNER"}}<span class="role-owner">Owner</span>
+            {{else}}<span class="role-member">Member</span>{{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else if .TeamUnavailable}}
+  <div class="card card-warn">Team ownership information is currently unavailable.</div>
+  {{end}}
+</div>
+
+{{else if .IngressNotFound}}
+<div class="results">
+  <div class="card card-missing">No namespace found for <strong>{{.IngressInput}}</strong>.</div>
+</div>
+{{else if .IngressError}}
+<div class="results">
+  <div class="card card-error">{{.IngressError}}</div>
+</div>
+{{end}}
+{{end}}

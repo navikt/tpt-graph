@@ -2,7 +2,7 @@ package handler
 
 import (
 	"context"
-	_ "embed"
+	"embed"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -11,15 +11,17 @@ import (
 	"strings"
 	"time"
 
+	"tpt-graph/internal/neo4j"
 	"tpt-graph/internal/whodis"
 )
 
-//go:embed page.html
-var pageTmpl string
+//go:embed layout.html home.html ingress.html dependency.html
+var templateFiles embed.FS
 
 // Neo4jQuerier is the only interface the handler depends on for graph queries.
 type Neo4jQuerier interface {
 	FindNamespaceByIngress(ctx context.Context, hostname string) (string, error)
+	FindDependencyUsages(ctx context.Context, name, version, ecosystem string) ([]neo4j.DependencyUsage, error)
 }
 
 // WhodisClient is the interface for fetching team ownership information.
@@ -29,29 +31,45 @@ type WhodisClient interface {
 
 // Handler handles all HTTP traffic for the service.
 type Handler struct {
-	neo4j  Neo4jQuerier
-	whodis WhodisClient
-	tmpl   *template.Template
+	neo4j     Neo4jQuerier
+	whodis    WhodisClient
+	templates map[string]*template.Template
 }
 
 // New returns an initialised Handler.
 func New(querier Neo4jQuerier, whodis WhodisClient) *Handler {
 	return &Handler{
-		neo4j:  querier,
-		whodis: whodis,
-		tmpl:   template.Must(template.New("page").Parse(pageTmpl)),
+		neo4j:     querier,
+		whodis:    whodis,
+		templates: mustParseTemplates(),
 	}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	data := pageData{}
+	switch r.URL.Path {
+	case "/ingress":
+		h.handleIngress(w, r)
+	case "/dependency":
+		h.handleDependency(w, r)
+	default:
+		h.handleHome(w, r)
+	}
+}
+
+func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
+	render(w, h.templates["home"], pageData{})
+}
+
+// handleIngress resolves a namespace (and team ownership) from an ingress URL.
+func (h *Handler) handleIngress(w http.ResponseWriter, r *http.Request) {
+	data := pageData{ActiveTab: "ingress"}
 	input := strings.TrimSpace(r.URL.Query().Get("ingress"))
-	data.Input = input
+	data.IngressInput = input
 
 	if input != "" {
 		hostname, err := extractHostname(input)
 		if err != nil {
-			data.Error = err.Error()
+			data.IngressError = err.Error()
 		} else {
 			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 			defer cancel()
@@ -59,9 +77,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ns, err := h.neo4j.FindNamespaceByIngress(ctx, hostname)
 			if err != nil {
 				slog.Error("neo4j query failed", "err", err)
-				data.Error = "Database query failed — please try again later."
+				data.IngressError = "Database query failed — please try again later."
 			} else if ns == "" {
-				data.NotFound = true
+				data.IngressNotFound = true
 			} else {
 				data.Namespace = ns
 
@@ -76,20 +94,78 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	render(w, h.templates["ingress"], data)
+}
+
+// handleDependency finds all apps that use a given dependency name/version/ecosystem.
+func (h *Handler) handleDependency(w http.ResponseWriter, r *http.Request) {
+	data := pageData{ActiveTab: "dependency"}
+	data.DepName = strings.TrimSpace(r.URL.Query().Get("name"))
+	data.DepVersion = strings.TrimSpace(r.URL.Query().Get("version"))
+	data.DepEcosystem = strings.TrimSpace(r.URL.Query().Get("ecosystem"))
+
+	if data.DepName != "" && data.DepVersion != "" && data.DepEcosystem != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+
+		usages, err := h.neo4j.FindDependencyUsages(ctx, data.DepName, data.DepVersion, data.DepEcosystem)
+		if err != nil {
+			slog.Error("dependency query failed", "err", err)
+			data.DepError = "Database query failed — please try again later."
+		} else if len(usages) == 0 {
+			data.DepNotFound = true
+		} else {
+			data.DepUsages = usages
+		}
+	}
+
+	render(w, h.templates["dependency"], data)
+}
+
+// render executes the named template set and writes the response.
+func render(w http.ResponseWriter, tmpl *template.Template, data pageData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := h.tmpl.Execute(w, data); err != nil {
+	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
 		slog.Error("template render failed", "err", err)
 	}
 }
 
-// pageData is the view model passed to the HTML template.
+// mustParseTemplates builds a template set per page by pairing layout.html
+// with each page-specific content template.
+func mustParseTemplates() map[string]*template.Template {
+	pairs := map[string]string{
+		"home":       "home.html",
+		"ingress":    "ingress.html",
+		"dependency": "dependency.html",
+	}
+	result := make(map[string]*template.Template, len(pairs))
+	for name, contentFile := range pairs {
+		result[name] = template.Must(
+			template.New("").ParseFS(templateFiles, "layout.html", contentFile),
+		)
+	}
+	return result
+}
+
+// pageData is the unified view model passed to all templates.
 type pageData struct {
-	Input           string
+	ActiveTab string
+
+	// Ingress lookup
+	IngressInput    string
 	Namespace       string
-	NotFound        bool
-	Error           string
+	IngressNotFound bool
+	IngressError    string
 	Team            *whodis.Team
 	TeamUnavailable bool
+
+	// Dependency lookup
+	DepName      string
+	DepVersion   string
+	DepEcosystem string
+	DepUsages    []neo4j.DependencyUsage
+	DepNotFound  bool
+	DepError     string
 }
 
 // extractHostname parses raw into a bare hostname (no scheme, port, or path).

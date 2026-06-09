@@ -1,0 +1,49 @@
+{{define "content"}}
+<h2>Dependency usage</h2>
+
+<form method="GET" action="/dependency">
+  <input type="text" name="name"      placeholder="Package name"  value="{{.DepName}}"      autocomplete="off" spellcheck="false" />
+  <input type="text" name="version"   placeholder="Version"       value="{{.DepVersion}}"   autocomplete="off" spellcheck="false" />
+  <input type="text" name="ecosystem" placeholder="Ecosystem"     value="{{.DepEcosystem}}" autocomplete="off" spellcheck="false" />
+  <button type="submit">Look up</button>
+</form>
+
+{{if .DepUsages}}
+<div class="results">
+  <div class="card card-info">
+    <p class="result-meta">
+      {{len .DepUsages}} result{{if gt (len .DepUsages) 1}}s{{end}} for
+      <strong>{{.DepName}}@{{.DepVersion}}</strong> ({{.DepEcosystem}})
+    </p>
+    <table>
+      <thead>
+        <tr><th>Cluster</th><th>Namespace</th><th>App</th><th>Image</th><th>Commit</th><th>Deployed at</th></tr>
+      </thead>
+      <tbody>
+        {{range .DepUsages}}
+        <tr>
+          <td><span class="mono">{{.Cluster}}</span></td>
+          <td><span class="mono">{{.Namespace}}</span></td>
+          <td>{{.App}}</td>
+          <td><span class="mono">{{.RunningImage}}</span></td>
+          <td><span class="mono">{{.DeployedCommit}}</span></td>
+          <td><span class="mono">{{.DeployedAt}}</span></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{{else if .DepNotFound}}
+<div class="results">
+  <div class="card card-missing">
+    No apps found using <strong>{{.DepName}}@{{.DepVersion}}</strong> ({{.DepEcosystem}}).
+  </div>
+</div>
+{{else if .DepError}}
+<div class="results">
+  <div class="card card-error">{{.DepError}}</div>
+</div>
+{{end}}
+{{end}}
