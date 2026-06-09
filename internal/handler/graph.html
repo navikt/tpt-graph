@@ -319,8 +319,11 @@
   // ── Graph payload → Cytoscape elements ─────────────────────────────────────
   function payloadToElements(payload) {
     const elements = [];
+    const addedIds = new Set();
+
     (payload.nodes || []).forEach(n => {
       if (cy.getElementById(n.id).length > 0) return;
+      addedIds.add(n.id);
       elements.push({
         group: 'nodes',
         data:  {
@@ -335,8 +338,11 @@
     });
     (payload.edges || []).forEach(e => {
       if (cy.getElementById(e.id).length > 0) return;
-      if (cy.getElementById(e.source).length === 0) return;
-      if (cy.getElementById(e.target).length === 0) return;
+      // Include edge if both endpoints are either already in the graph
+      // or being added in this same batch.
+      const srcOk = cy.getElementById(e.source).length > 0 || addedIds.has(e.source);
+      const tgtOk = cy.getElementById(e.target).length > 0 || addedIds.has(e.target);
+      if (!srcOk || !tgtOk) return;
       elements.push({
         group: 'edges',
         data:  { id: e.id, source: e.source, target: e.target, type: e.type }

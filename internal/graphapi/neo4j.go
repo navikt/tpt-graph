@@ -22,15 +22,11 @@ func GraphSeed(ctx context.Context, drv neodriver.DriverWithContext, repo string
 
 	result, err := session.Run(ctx, `
 		MATCH (repo:GitHubRepository {name: $repo})
-		OPTIONAL MATCH (repo)<-[:DEPLOYED_FROM]-(d:NaisDeployment)
-		              <-[:HAS_DEPLOYMENT]-(app:NaisApp)
-		OPTIONAL MATCH (app)-[:RUNS_IN]->(ns:KubernetesNamespace)
-		OPTIONAL MATCH (app)<-[:HAS_APP]-(team:NaisTeam)
-		RETURN repo, d, app, ns, team,
-		       [(repo)<-[r1:DEPLOYED_FROM]-(d) WHERE d IS NOT NULL | r1] +
-		       [(d)<-[r2:HAS_DEPLOYMENT]-(app) WHERE app IS NOT NULL | r2] +
-		       [(app)-[r3:RUNS_IN]->(ns) WHERE ns IS NOT NULL | r3] +
-		       [(app)<-[r4:HAS_APP]-(team) WHERE team IS NOT NULL | r4] AS rels`,
+		OPTIONAL MATCH (repo)<-[r1:DEPLOYED_FROM]-(d:NaisDeployment)
+		              <-[r2:HAS_DEPLOYMENT]-(app:NaisApp)
+		OPTIONAL MATCH (app)-[r3:RUNS_IN]->(ns:KubernetesNamespace)
+		OPTIONAL MATCH (app)<-[r4:HAS_APP]-(team:NaisTeam)
+		RETURN repo, d, app, ns, team, r1, r2, r3, r4`,
 		map[string]any{"repo": repo},
 	)
 	if err != nil {
@@ -51,13 +47,13 @@ func GraphSeed(ctx context.Context, drv neodriver.DriverWithContext, repo string
 				nodes[n.ElementId] = n
 			}
 		}
-		if val, ok := rec.Get("rels"); ok && val != nil {
-			if relList, ok := val.([]any); ok {
-				for _, r := range relList {
-					if rel, ok := r.(neo4j.Relationship); ok {
-						rels[rel.ElementId] = rel
-					}
-				}
+		for _, key := range []string{"r1", "r2", "r3", "r4"} {
+			val, ok := rec.Get(key)
+			if !ok || val == nil {
+				continue
+			}
+			if r, ok := val.(neo4j.Relationship); ok {
+				rels[r.ElementId] = r
 			}
 		}
 	}
@@ -112,6 +108,9 @@ func GraphExpand(ctx context.Context, drv neodriver.DriverWithContext, elementID
 		}
 		if val, ok := rec.Get("r"); ok && val != nil {
 			if rel, ok := val.(neo4j.Relationship); ok {
+				// Always collect the relationship — the frontend skips edges
+				// whose endpoints are already in the graph, so known→new
+				// connections are handled correctly by Cytoscape.
 				rels[rel.ElementId] = rel
 			}
 		}
@@ -120,7 +119,7 @@ func GraphExpand(ctx context.Context, drv neodriver.DriverWithContext, elementID
 		return nil, fmt.Errorf("graph expand iteration: %w", err)
 	}
 
-	// Filter out nodes the client already has.
+	// Filter out nodes the client already has, but keep all edges.
 	for id := range nodes {
 		if known[id] {
 			delete(nodes, id)
