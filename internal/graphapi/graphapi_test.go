@@ -1,8 +1,11 @@
 package graphapi
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+
+	neo4j "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 func TestPrimaryLabel(t *testing.T) {
@@ -199,5 +202,87 @@ func TestGraphSeedQuery_FiltersActiveDeployments(t *testing.T) {
 func TestGraphExpandQuery_FiltersActiveDeployments(t *testing.T) {
 	if !strings.Contains(graphExpandQuery, "is_active") {
 		t.Error("graphExpandQuery must filter NaisDeployment nodes by is_active = true to exclude inactive deployments")
+	}
+}
+
+func TestCapNodesByLabel(t *testing.T) {
+	makeNode := func(id string, labels []string) neo4j.Node {
+		return neo4j.Node{ElementId: id, Labels: labels}
+	}
+
+	tests := []struct {
+		name      string
+		nodes     map[string]neo4j.Node
+		limit     int
+		wantTotal int
+		wantMax   int // max nodes of any single label
+	}{
+		{
+			name: "nodes under limit are unchanged",
+			nodes: map[string]neo4j.Node{
+				"a": makeNode("a", []string{"GitHubRepository"}),
+				"b": makeNode("b", []string{"NaisApp"}),
+			},
+			limit:     10,
+			wantTotal: 2,
+			wantMax:   1,
+		},
+		{
+			name: "nodes over limit are capped per label",
+			nodes: func() map[string]neo4j.Node {
+				m := make(map[string]neo4j.Node, 15)
+				for i := range 15 {
+					id := fmt.Sprintf("dep-%d", i)
+					m[id] = makeNode(id, []string{"Dependency"})
+				}
+				return m
+			}(),
+			limit:     10,
+			wantTotal: 10,
+			wantMax:   10,
+		},
+		{
+			name: "different labels are capped independently",
+			nodes: func() map[string]neo4j.Node {
+				m := make(map[string]neo4j.Node, 20)
+				for i := range 12 {
+					id := fmt.Sprintf("dep-%d", i)
+					m[id] = makeNode(id, []string{"Dependency"})
+				}
+				for i := range 8 {
+					id := fmt.Sprintf("user-%d", i)
+					m[id] = makeNode(id, []string{"GitHubUser"})
+				}
+				return m
+			}(),
+			limit:     10,
+			wantTotal: 18, // 10 Dependency + 8 GitHubUser
+			wantMax:   10,
+		},
+		{
+			name:      "empty map returns empty map",
+			nodes:     map[string]neo4j.Node{},
+			limit:     10,
+			wantTotal: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := capNodesByLabel(tt.nodes, tt.limit)
+			if len(got) != tt.wantTotal {
+				t.Errorf("total nodes: want %d, got %d", tt.wantTotal, len(got))
+			}
+			// Verify no label exceeds the limit.
+			labelCounts := make(map[string]int)
+			for _, n := range got {
+				labelCounts[primaryLabel(n.Labels)]++
+			}
+			for label, count := range labelCounts {
+				if count > tt.limit {
+					t.Errorf("label %q: got %d nodes, limit is %d", label, count, tt.limit)
+				}
+			}
+		})
 	}
 }

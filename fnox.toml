@@ -1,0 +1,8 @@
+default_provider = "keychain"
+
+[providers.keychain]
+type = "keychain"
+service = "fnox"
+
+[secrets]
+NEO4J_PASSWORD= { provider = "keychain", value = "NEO4J_PASSWORD" }

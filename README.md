@@ -4,15 +4,18 @@ Attack path mapping tool for the appsec and isoc teams at Nav. A read-only web i
 
 ## Running locally
 
+`NEO4J_PASSWORD` is sourced automatically from fnox. Once it is set in your shell:
+
 ```bash
-NEO4J_URI=neo4j://localhost:7687 NEO4J_USER=neo4j NEO4J_PASSWORD=secret WHODIS_URL=http://whodis make run
+make run-local
 ```
 
 ## Commands
 
 ```bash
 make build        # go build -o bin/tpt-graph ./cmd/tpt-graph
-make run          # go run ./cmd/tpt-graph  (needs env vars below)
+make run          # go run ./cmd/tpt-graph
+make run-local    # run with local Neo4j defaults (NEO4J_PASSWORD sourced from fnox)
 make docker-build # docker build -t tpt-graph .
 make clean        # rm -rf bin/
 go test ./...     # run all tests

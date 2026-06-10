@@ -93,7 +93,14 @@ var graphExpandQuery = `
 	WHERE NOT (neighbour:NaisDeployment AND neighbour.is_active = false)
 	RETURN r, neighbour`
 
+// expandPerLabelLimit caps the number of new neighbours returned per node
+// label on expand. This prevents a single GitHubRepository from flooding the
+// graph with hundreds of Dependency or GitHubUser nodes in one click.
+const expandPerLabelLimit = 10
+
 // GraphExpand returns all immediate neighbours of a node, excluding already-known nodes.
+// At most expandPerLabelLimit new nodes are returned per label type; capped nodes
+// have hasMore=true so the user knows more exist.
 func GraphExpand(ctx context.Context, drv neodriver.DriverWithContext, elementID string, knownIDs []string) (*GraphPayload, error) {
 	session := drv.NewSession(ctx, neodriver.SessionConfig{AccessMode: neodriver.AccessModeRead})
 	defer session.Close(ctx)
@@ -139,6 +146,11 @@ func GraphExpand(ctx context.Context, drv neodriver.DriverWithContext, elementID
 			delete(nodes, id)
 		}
 	}
+
+	// Cap new nodes per primary label to avoid flooding the graph.
+	// Capped nodes are dropped; their absence keeps hasMore=true on the
+	// expanded node so the user knows not all neighbours are shown.
+	nodes = capNodesByLabel(nodes, expandPerLabelLimit)
 
 	nodeIDs := make([]string, 0, len(nodes))
 	for id := range nodes {
@@ -240,4 +252,20 @@ func cleanProp(v any) any {
 	default:
 		return val
 	}
+}
+
+// capNodesByLabel returns a copy of nodes with at most limit entries per
+// primary label. This prevents high-fan-out node types (e.g. Dependency,
+// GitHubUser) from flooding the graph on a single expand.
+func capNodesByLabel(nodes map[string]neo4j.Node, limit int) map[string]neo4j.Node {
+	counts := make(map[string]int)
+	result := make(map[string]neo4j.Node, len(nodes))
+	for id, n := range nodes {
+		label := primaryLabel(n.Labels)
+		if counts[label] < limit {
+			result[id] = n
+			counts[label]++
+		}
+	}
+	return result
 }

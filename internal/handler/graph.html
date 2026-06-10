@@ -92,7 +92,7 @@
     <button type="submit">Explore</button>
   </form>
 </div>
-<p class="graph-hint">Click a node to see its properties. Nodes with a dashed border have unexplored neighbours — click to expand.</p>
+<p class="graph-hint">Click a node to inspect it. Dashed border = unexplored neighbours, click to expand. Summary nodes (grey, dashed) represent grouped neighbours — click to reveal. Double-click an expanded node to collapse it.</p>
 <div id="graph-error" class="card card-error"></div>
 
 <div class="graph-wrap">
@@ -107,7 +107,10 @@
   </div>
 </div>
 
+<script src="/static/layout-base.min.js"></script>
+<script src="/static/cose-base.min.js"></script>
 <script src="/static/cytoscape.min.js"></script>
+<script src="/static/cytoscape-fcose.min.js"></script>
 <script>
 (function () {
   'use strict';
@@ -154,6 +157,20 @@
         }
       },
       {
+        selector: 'node[?isSummary]',
+        style: {
+          'background-color':   '#7a7a9a',
+          'border-width':        3,
+          'border-style':       'dashed',
+          'border-color':       '#444',
+          'font-size':          '10px',
+          'text-max-width':     '80px',
+          'width':               60,
+          'height':              60,
+          'text-outline-color': '#7a7a9a',
+        }
+      },
+      {
         selector: 'node:selected',
         style: {
           'border-width':  4,
@@ -190,15 +207,22 @@
   });
 
   // ── State ───────────────────────────────────────────────────────────────────
-  const expandedNodes = new Set();
-  let expanding = false; // prevent concurrent expands
+  const expandedNodes = new Set();       // node IDs that have been expanded
+  const childrenOf    = new Map();       // nodeId → Set of element IDs added by that expand
+  let expanding = false;                 // prevent concurrent expands
 
-  // ── Single unified tap handler ──────────────────────────────────────────────
+  // ── Tap handler — expand real nodes or expand a summary node ────────────────
   cy.on('tap', 'node', async function (evt) {
     const node = evt.target;
     const data = node.data();
 
-    // Always update sidebar.
+    // Summary node: expand it into real nodes immediately (no server call).
+    if (data.isSummary) {
+      expandSummary(node);
+      return;
+    }
+
+    // Always update sidebar for real nodes.
     showSidebar(data);
 
     // Expand if eligible.
@@ -209,7 +233,10 @@
     node.addClass('expanded');
 
     try {
-      const knownIds = cy.nodes().map(n => n.data('id')).join(',');
+      // Exclude summary node IDs from knownIds — they are virtual and unknown to the server.
+      const knownIds = cy.nodes()
+        .filter(n => !n.data('isSummary'))
+        .map(n => n.data('id')).join(',');
       const url = `/api/graph/expand?id=${encodeURIComponent(data.id)}&known=${encodeURIComponent(knownIds)}`;
       const res = await fetch(url);
       if (!res.ok) { expanding = false; return; }
@@ -218,37 +245,101 @@
       const elements = payloadToElements(payload);
       if (elements.length === 0) { expanding = false; return; }
 
-      // Pre-position new nodes grouped by primary label before adding to graph,
-      // so cose starts with clusters rather than a random pile.
-      const origin = node.position();
-      prePositionByLabel(elements, origin);
+      // Build summary elements: groups with >1 node become a single summary node.
+      // Groups with exactly 1 node are shown directly.
+      const { summaryElements, directElements } =
+        buildSummaryElements(elements, data.id);
 
-      cy.add(elements);
+      const allElements = [...summaryElements, ...directElements];
+      if (allElements.length === 0) { expanding = false; return; }
 
-      // Lock all existing nodes so only new nodes are moved by the layout.
-      // This prevents the entire graph from being reshuffled on every expand.
-      const newNodeIds = new Set(elements.filter(e => e.group === 'nodes').map(e => e.data.id));
-      cy.nodes().forEach(n => { if (!newNodeIds.has(n.data('id'))) n.lock(); });
+      // Track all introduced element IDs for collapse.
+      const newNodeIds = new Set(allElements.filter(e => e.group === 'nodes').map(e => e.data.id));
+      const newEdgeIds = new Set(allElements.filter(e => e.group === 'edges').map(e => e.data.id));
+      childrenOf.set(data.id, new Set([...newNodeIds, ...newEdgeIds]));
 
-      cy.layout({
-        name:              'cose',
-        animate:           true,
-        animationDuration: 600,
-        fit:               false,
-        randomize:         false,
-        nodeRepulsion:     32000,
-        idealEdgeLength:   180,
-        edgeElasticity:    0.4,
-        gravity:           0.1,
-        numIter:           1200,
-      }).run().on('layoutstop', () => {
-        cy.nodes().unlock();
-      });
+      const existingBB = cy.nodes().boundingBox();
+      const hubPos     = node.position();
+      const numGroups  = countGroups(allElements, data.id);
+      const freeArc    = findFreeArc(hubPos, numGroups);
+
+      if (freeArc !== null) {
+        seedPositionsByRelationship(allElements, data.id, hubPos, existingBB, freeArc);
+        cy.add(allElements);
+        cy.animate({ fit: { eles: cy.elements(), padding: 60 } }, { duration: 500 });
+      } else {
+        seedPositionsByRelationship(allElements, data.id, hubPos, existingBB, null);
+        cy.add(allElements);
+        cy.layout({
+          name:                        'fcose',
+          animate:                     true,
+          animationDuration:           900,
+          fit:                         true,
+          padding:                     60,
+          randomize:                   false,
+          quality:                     'proof',
+          nodeDimensionsIncludeLabels: true,
+          uniformNodeDimensions:       false,
+          nodeRepulsion:               45000,
+          idealEdgeLength:             200,
+          edgeElasticity:              0.45,
+          nestingFactor:               0.1,
+          gravity:                     0.15,
+          gravityRange:                3.8,
+          numIter:                     5000,
+          tile:                        true,
+          tilingPaddingVertical:       30,
+          tilingPaddingHorizontal:     30,
+        }).run();
+      }
     } catch (e) {
       console.error('expand failed', e);
     } finally {
       expanding = false;
     }
+  });
+
+  // ── Collapse handler (double-tap) ───────────────────────────────────────────
+  cy.on('dbltap', 'node', function (evt) {
+    const node = evt.target;
+    const id   = node.data('id');
+
+    if (!expandedNodes.has(id)) return;
+
+    const introduced = childrenOf.get(id) || new Set();
+
+    // Collect nodes to remove: those introduced by this expand that have no
+    // connections to nodes outside the introduced set (other than back to the
+    // collapsed node itself).
+    const toRemove = cy.collection();
+    introduced.forEach(eid => {
+      const el = cy.getElementById(eid);
+      if (el.length === 0 || el.isEdge()) return;
+
+      const hasExternalConnection = el.connectedEdges().some(edge => {
+        const other = edge.source().data('id') === eid
+          ? edge.target().data('id')
+          : edge.source().data('id');
+        return other !== id && !introduced.has(other);
+      });
+
+      if (!hasExternalConnection) toRemove.merge(el);
+    });
+
+    // Remove the orphaned nodes — their edges are removed automatically.
+    toRemove.remove();
+
+    // Also remove any introduced edges that are now dangling.
+    introduced.forEach(eid => {
+      const el = cy.getElementById(eid);
+      if (el.length > 0 && el.isEdge()) el.remove();
+    });
+
+    // Reset state so the node can be re-expanded.
+    expandedNodes.delete(id);
+    childrenOf.delete(id);
+    node.removeClass('expanded');
+    node.data('hasMore', true);
   });
 
   // ── Form submit ─────────────────────────────────────────────────────────────
@@ -261,6 +352,7 @@
     errEl.style.display = 'none';
     cy.elements().remove();
     expandedNodes.clear();
+    childrenOf.clear();
     hideSidebar();
 
     try {
@@ -365,40 +457,241 @@
     });
     return elements;
   }
-  // ── Pre-position new nodes by label group ───────────────────────────────────
-  // Groups new nodes by their primary label and places each group in a sector
-  // radiating out from the origin point. cose then settles them while keeping
-  // same-type nodes close together.
-  function prePositionByLabel(elements, origin) {
-    const nodeEls = elements.filter(e => e.group === 'nodes');
-    if (nodeEls.length === 0) return;
 
-    // Group by primary label (first label alphabetically that isn't a generic one).
-    const groups = {};
-    nodeEls.forEach(el => {
-      const label = primaryLabel(el.data.labels || []);
-      if (!groups[label]) groups[label] = [];
-      groups[label].push(el);
+  // ── Build summary elements ──────────────────────────────────────────────────
+  // Groups new elements by relationship type. Groups with >1 node become a
+  // single summary node. Groups with exactly 1 node are passed through directly.
+  // Returns { summaryElements, directElements }.
+  function buildSummaryElements(elements, hubId) {
+    const nodeEls = elements.filter(e => e.group === 'nodes');
+    const edgeEls = elements.filter(e => e.group === 'edges');
+
+    // Map each new node to its relationship type from the hub.
+    const nodeRelType = new Map();
+    edgeEls.forEach(e => {
+      const d = e.data;
+      if (d.source === hubId && !nodeRelType.has(d.target)) nodeRelType.set(d.target, d.type);
+      else if (d.target === hubId && !nodeRelType.has(d.source)) nodeRelType.set(d.source, d.type);
     });
 
-    const groupList = Object.entries(groups);
-    const numGroups = groupList.length;
-    const radius    = 220; // distance from origin to group centre
-    const spread    = 80;  // distance between nodes within a group
+    // Group nodes by relationship type.
+    const groups = {};
+    nodeEls.forEach(el => {
+      const key = nodeRelType.get(el.data.id) || primaryLabel(el.data.labels || []);
+      if (!groups[key]) groups[key] = { nodes: [], edges: [] };
+      groups[key].nodes.push(el);
+    });
+    // Attach edges to their group.
+    edgeEls.forEach(e => {
+      const d = e.data;
+      const peerId = d.source === hubId ? d.target : d.source;
+      const key = nodeRelType.get(peerId);
+      if (key && groups[key]) groups[key].edges.push(e);
+    });
 
-    groupList.forEach(([, nodes], groupIdx) => {
-      // Evenly distribute groups around a circle centred on the expanded node.
-      const angle = (2 * Math.PI * groupIdx) / numGroups - Math.PI / 2;
-      const cx = origin.x + radius * Math.cos(angle);
-      const cy = origin.y + radius * Math.sin(angle);
+    const summaryElements = [];
+    const directElements  = [];
 
-      nodes.forEach((el, nodeIdx) => {
-        // Arrange nodes within the group in a small grid around the group centre.
-        const cols  = Math.ceil(Math.sqrt(nodes.length));
-        const col   = nodeIdx % cols;
-        const row   = Math.floor(nodeIdx / cols);
-        const ox    = (col - (cols - 1) / 2) * spread;
-        const oy    = (row - (Math.ceil(nodes.length / cols) - 1) / 2) * spread;
+    Object.entries(groups).forEach(([relType, { nodes, edges }]) => {
+      if (nodes.length === 1) {
+        // Single node — show directly.
+        directElements.push(nodes[0]);
+        directElements.push(...edges);
+        return;
+      }
+
+      // Multiple nodes — create a summary node and a single edge to the hub.
+      const summaryId = `__summary__${hubId}__${relType}`;
+      summaryElements.push({
+        group: 'nodes',
+        data: {
+          id:             summaryId,
+          caption:        `${nodes.length} × ${relType}`,
+          color:          '#7a7a9a',
+          hasMore:        true,
+          isSummary:      true,
+          labels:         [],
+          properties:     {},
+          // Store the real nodes and edges so we can expand later without a server call.
+          summaryNodes:   nodes,
+          summaryEdges:   edges,
+          summaryHubId:   hubId,
+        }
+      });
+      summaryElements.push({
+        group: 'edges',
+        data: {
+          id:     `__summary_edge__${hubId}__${relType}`,
+          source: hubId,
+          target: summaryId,
+          type:   relType,
+        }
+      });
+    });
+
+    return { summaryElements, directElements };
+  }
+
+  // ── Expand a summary node into its real nodes ───────────────────────────────
+  function expandSummary(summaryNode) {
+    const data      = summaryNode.data();
+    const realNodes = data.summaryNodes || [];
+    const realEdges = data.summaryEdges || [];
+    if (realNodes.length === 0) return;
+
+    const summaryPos = summaryNode.position();
+    const hubId      = data.summaryHubId;
+
+    // Remove the summary node (its edge is removed automatically).
+    const summaryId = data.id;
+    summaryNode.remove();
+
+    // Remove summary from parent's childrenOf so collapse still works.
+    for (const [parentId, children] of childrenOf.entries()) {
+      if (children.has(summaryId)) {
+        children.delete(summaryId);
+        // Add real node/edge IDs in their place.
+        realNodes.forEach(n => children.add(n.data.id));
+        realEdges.forEach(e => children.add(e.data.id));
+        // Also remove the summary edge ID.
+        children.delete(`__summary_edge__${hubId}__${data.caption.split(' × ')[1]}`);
+      }
+    }
+
+    // Place real nodes clustered around the summary node's former position.
+    const spread = 100;
+    realNodes.forEach((el, i) => {
+      const cols = Math.ceil(Math.sqrt(realNodes.length));
+      const col  = i % cols;
+      const row  = Math.floor(i / cols);
+      el.position = {
+        x: summaryPos.x + (col - (cols - 1) / 2) * spread,
+        y: summaryPos.y + (row - (Math.ceil(realNodes.length / cols) - 1) / 2) * spread,
+      };
+    });
+
+    cy.add([...realNodes, ...realEdges]);
+    cy.animate({ fit: { eles: cy.elements(), padding: 60 } }, { duration: 400 });
+  }
+
+  // ── Count distinct relationship groups in a payload ────────────────────────
+  function countGroups(elements, hubId) {
+    const edgeEls   = elements.filter(e => e.group === 'edges');
+    const nodeRelType = new Map();
+    edgeEls.forEach(e => {
+      const d = e.data;
+      if (d.source === hubId && !nodeRelType.has(d.target)) nodeRelType.set(d.target, d.type);
+      else if (d.target === hubId && !nodeRelType.has(d.source)) nodeRelType.set(d.source, d.type);
+    });
+    const keys = new Set();
+    elements.filter(e => e.group === 'nodes').forEach(el => {
+      keys.add(nodeRelType.get(el.data.id) || primaryLabel(el.data.labels || []));
+    });
+    return keys.size || 1;
+  }
+
+  // ── Find a free angular arc around the hub ──────────────────────────────────
+  // Returns { startAngle, totalArc } in radians if enough free space exists,
+  // or null if existing nodes occupy too much of the circle.
+  // "Free" means no existing node (other than the hub) falls within the arc
+  // when viewed from the hub, with a 25° buffer on each occupied angle.
+  function findFreeArc(hubPos, numGroups) {
+    const BUFFER_RAD  = (25 * Math.PI) / 180; // 25° buffer around each existing node
+    const MIN_ARC_RAD = (40 * Math.PI) / 180; // minimum arc per group
+
+    const required = numGroups * MIN_ARC_RAD;
+
+    // Collect angles of all existing nodes relative to the hub.
+    const occupied = [];
+    cy.nodes().forEach(n => {
+      const pos = n.position();
+      const dx  = pos.x - hubPos.x;
+      const dy  = pos.y - hubPos.y;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return; // skip hub itself
+      occupied.push(Math.atan2(dy, dx));
+    });
+
+    if (occupied.length === 0) {
+      return { startAngle: -Math.PI / 2, totalArc: 2 * Math.PI };
+    }
+
+    // Sort occupied angles and find the largest contiguous free arc.
+    occupied.sort((a, b) => a - b);
+
+    // Build blocked intervals [angle - buffer, angle + buffer] on the circle.
+    // Find gaps between consecutive blocked intervals.
+    const TWO_PI = 2 * Math.PI;
+    let bestStart = 0;
+    let bestArc   = 0;
+
+    for (let i = 0; i < occupied.length; i++) {
+      const gapStart = occupied[i] + BUFFER_RAD;
+      const gapEnd   = occupied[(i + 1) % occupied.length] - BUFFER_RAD
+        + (i + 1 === occupied.length ? TWO_PI : 0);
+      const arc = gapEnd - gapStart;
+      if (arc > bestArc) {
+        bestArc   = arc;
+        bestStart = gapStart;
+      }
+    }
+
+    if (bestArc < required) return null; // not enough room — trigger re-render
+    return { startAngle: bestStart, totalArc: bestArc };
+  }
+
+  // ── Seed positions for new nodes by relationship type ───────────────────────
+  // Places each relationship group in its own sector within the free arc.
+  // When freeArc is null (full re-render path) positions are still seeded
+  // so fcose starts from a grouped state.
+  function seedPositionsByRelationship(elements, hubId, origin, existingBB, freeArc) {
+    const nodeEls = elements.filter(e => e.group === 'nodes');
+    const edgeEls = elements.filter(e => e.group === 'edges');
+    if (nodeEls.length === 0) return;
+
+    // Map each new node to the relationship type of its direct edge to the hub.
+    const nodeRelType = new Map();
+    edgeEls.forEach(e => {
+      const d = e.data;
+      if (d.source === hubId && !nodeRelType.has(d.target)) nodeRelType.set(d.target, d.type);
+      else if (d.target === hubId && !nodeRelType.has(d.source)) nodeRelType.set(d.source, d.type);
+    });
+
+    // Group by relationship type, fall back to primary label.
+    const groups = {};
+    nodeEls.forEach(el => {
+      const key = nodeRelType.get(el.data.id) || primaryLabel(el.data.labels || []);
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(el);
+    });
+
+    const groupList  = Object.values(groups);
+    const numGroups  = groupList.length;
+    const halfDiag   = Math.sqrt(existingBB.w ** 2 + existingBB.h ** 2) / 2;
+    const ringRadius = halfDiag + 350;
+    const innerSpread = 100;
+    const graphCx    = existingBB.x1 + existingBB.w / 2;
+    const graphCy    = existingBB.y1 + existingBB.h / 2;
+
+    groupList.forEach((nodes, groupIdx) => {
+      let angle;
+      if (freeArc !== null) {
+        // Distribute groups evenly within the free arc.
+        const step = freeArc.totalArc / (numGroups + 1);
+        angle = freeArc.startAngle + step * (groupIdx + 1);
+      } else {
+        // Full re-render fallback: spread evenly around the full circle.
+        angle = (2 * Math.PI * groupIdx) / numGroups - Math.PI / 2;
+      }
+
+      const cx = graphCx + ringRadius * Math.cos(angle);
+      const cy = graphCy + ringRadius * Math.sin(angle);
+
+      nodes.forEach((el, i) => {
+        const cols = Math.ceil(Math.sqrt(nodes.length));
+        const col  = i % cols;
+        const row  = Math.floor(i / cols);
+        const ox   = (col - (cols - 1) / 2) * innerSpread;
+        const oy   = (row - (Math.ceil(nodes.length / cols) - 1) / 2) * innerSpread;
         el.position = { x: cx + ox, y: cy + oy };
       });
     });
