@@ -4,8 +4,8 @@
 <form method="GET" action="/ingress">
   <input
     type="text"
-    name="ingress"
-    placeholder="https://sikkerhet.nav.no"
+    name="q"
+    placeholder="https://sikkerhet.nav.no or /my/path"
     value="{{.IngressInput}}"
     autocomplete="off"
     spellcheck="false"
@@ -49,9 +49,16 @@
   {{end}}
 </div>
 
+{{else if .PathMatchCount}}
+<div class="results">
+  <div class="card card-missing">
+    Found <strong>{{.PathMatchCount}} ingresses</strong> matching <strong>{{.IngressInput}}</strong> — please refine your search.
+  </div>
+</div>
+
 {{else if .IngressNotFound}}
 <div class="results">
-  <div class="card card-missing">No namespace found for <strong>{{.IngressInput}}</strong>.</div>
+  <div class="card card-missing">No ingress found matching <strong>{{.IngressInput}}</strong>.</div>
 </div>
 {{else if .IngressError}}
 <div class="results">

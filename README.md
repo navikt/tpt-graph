@@ -1,22 +1,45 @@
-# TittPåGraphDataTing
+# tpt-graph
 
-Simple web service for looking up which Kubernetes namespace owns a given ingress, and displaying team ownership information for that namespace. Queries a Neo4j graph database for the namespace and fetches team details from the whodis service.
-
-## Environment Variables
-
-| Variable | Description |
-|---|---|
-| `NEO4J_URI` | Bolt URI, e.g. `neo4j://neo4j:7687` |
-| `NEO4J_USER` | Neo4j username |
-| `NEO4J_PASSWORD` | Neo4j password |
-| `WHODIS_URL` | Whodis base URL, e.g. `http://whodis` |
-| `PORT` | HTTP port (default: `8080`) |
+Attack path mapping tool for the appsec and isoc teams at Nav. A read-only web interface over a Neo4j graph database populated by [Cartography](https://github.com/lyft/cartography) (CNCF). Cartography models cloud infrastructure, GitHub, Kubernetes, and Nais resources as a graph; this app queries and visualises that graph to surface ownership, dependency exposure, and attack paths.
 
 ## Running locally
 
 ```bash
 NEO4J_URI=neo4j://localhost:7687 NEO4J_USER=neo4j NEO4J_PASSWORD=secret WHODIS_URL=http://whodis make run
 ```
+
+## Commands
+
+```bash
+make build        # go build -o bin/tpt-graph ./cmd/tpt-graph
+make run          # go run ./cmd/tpt-graph  (needs env vars below)
+make docker-build # docker build -t tpt-graph .
+make clean        # rm -rf bin/
+go test ./...     # run all tests
+```
+
+## Environment variables
+
+The app exits on startup if any required variable is missing.
+
+| Variable | Required | Description |
+|---|---|---|
+| `NEO4J_URI` | yes | Bolt URI, e.g. `neo4j://localhost:7687` |
+| `NEO4J_USER` | yes | Neo4j username |
+| `NEO4J_PASSWORD` | yes | Neo4j password |
+| `WHODIS_URL` | yes | Base URL of the whodis team-ownership service |
+| `PORT` | no | HTTP port, defaults to `8080` |
+
+## Package layout
+
+| Path | Role |
+|---|---|
+| `cmd/tpt-graph/main.go` | Entrypoint — wiring only |
+| `internal/config/` | Env-var loading, exits on missing required vars |
+| `internal/handler/` | HTTP handlers, HTML templates, static files |
+| `internal/graphapi/` | Graph HTTP handlers + Cypher for graph seed/expand |
+| `internal/neo4j/` | Neo4j client wrapper + all non-graph Cypher queries |
+| `internal/whodis/` | HTTP client for the whodis team-ownership service |
 
 ## Contact
 

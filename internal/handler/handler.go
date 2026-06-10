@@ -15,7 +15,7 @@ import (
 	"tpt-graph/internal/whodis"
 )
 
-//go:embed layout.html home.html search.html dependency.html graph.html
+//go:embed layout.html home.html ingress.html dependency.html graph.html
 var templateFiles embed.FS
 
 //go:embed all:static
@@ -61,8 +61,8 @@ func StaticHandler() http.Handler {
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
-	case "/search":
-		h.handleSearch(w, r)
+	case "/ingress":
+		h.handleIngress(w, r)
 	case "/dependency":
 		h.handleDependency(w, r)
 	case "/graph":
@@ -92,16 +92,16 @@ func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 	render(w, h.templates["home"], data)
 }
 
-// handleSearch dispatches to ingress-by-hostname or ingress-by-path based on
+// handleIngress dispatches to ingress-by-hostname or ingress-by-path based on
 // what the user typed:
 //   - Valid http/https URL with no path (or just "/")  → hostname query
 //   - Valid http/https URL with a real path            → path query using that path
 //   - Starts with "/"                                  → path query directly
 //   - Anything else                                    → validation error
-func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
-	data := pageData{ActiveTab: "search"}
+func (h *Handler) handleIngress(w http.ResponseWriter, r *http.Request) {
+	data := pageData{ActiveTab: "ingress"}
 	input := strings.TrimSpace(r.URL.Query().Get("q"))
-	data.SearchInput = input
+	data.IngressInput = input
 
 	if input != "" {
 		if strings.HasPrefix(input, "/") {
@@ -111,22 +111,22 @@ func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	render(w, h.templates["search"], data)
+	render(w, h.templates["ingress"], data)
 }
 
 // runURLSearch parses a full URL and dispatches to hostname or path query.
 func (h *Handler) runURLSearch(r *http.Request, data *pageData, raw string) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {
-		data.SearchError = "Invalid input — enter a URL (https://example.nav.no) or a path (/my/path)."
+		data.IngressError = "Invalid input — enter a URL (https://example.nav.no) or a path (/my/path)."
 		return
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		data.SearchError = "URL scheme must be http or https."
+		data.IngressError = "URL scheme must be http or https."
 		return
 	}
 	if u.RawQuery != "" || u.Fragment != "" {
-		data.SearchError = "URL must not contain query parameters or fragments."
+		data.IngressError = "URL must not contain query parameters or fragments."
 		return
 	}
 
@@ -153,15 +153,15 @@ func (h *Handler) runPathSearch(r *http.Request, data *pageData, path string) {
 
 // queryByHostname looks up the namespace (and team) for a given hostname.
 func (h *Handler) queryByHostname(ctx context.Context, data *pageData, hostname string) {
-	data.SearchMode = "hostname"
+	data.IngressMode = "hostname"
 	ns, err := h.neo4j.FindNamespaceByIngress(ctx, hostname)
 	if err != nil {
 		slog.Error("neo4j ingress query failed", "err", err)
-		data.SearchError = "Database query failed — please try again later."
+		data.IngressError = "Database query failed — please try again later."
 		return
 	}
 	if ns == "" {
-		data.SearchNotFound = true
+		data.IngressNotFound = true
 		return
 	}
 	data.Namespace = ns
@@ -170,16 +170,16 @@ func (h *Handler) queryByHostname(ctx context.Context, data *pageData, hostname 
 
 // queryByPath looks up namespace(s) for a given path fragment.
 func (h *Handler) queryByPath(ctx context.Context, data *pageData, path string) {
-	data.SearchMode = "path"
+	data.IngressMode = "path"
 	namespaces, err := h.neo4j.FindNamespaceByPath(ctx, path)
 	if err != nil {
 		slog.Error("neo4j path query failed", "err", err)
-		data.SearchError = "Database query failed — please try again later."
+		data.IngressError = "Database query failed — please try again later."
 		return
 	}
 	switch len(namespaces) {
 	case 0:
-		data.SearchNotFound = true
+		data.IngressNotFound = true
 	case 1:
 		data.Namespace = namespaces[0]
 		h.lookupTeam(ctx, data, namespaces[0])
@@ -237,7 +237,7 @@ func render(w http.ResponseWriter, tmpl *template.Template, data pageData) {
 func mustParseTemplates() map[string]*template.Template {
 	pairs := map[string]string{
 		"home":       "home.html",
-		"search":     "search.html",
+		"ingress":    "ingress.html",
 		"dependency": "dependency.html",
 		"graph":      "graph.html",
 	}
@@ -257,11 +257,11 @@ type pageData struct {
 	// Home
 	ModuleSyncs []neo4j.ModuleSync
 
-	// Search (ingress ownership — hostname or path)
-	SearchInput     string
-	SearchMode      string // "hostname" or "path"
-	SearchNotFound  bool
-	SearchError     string
+	// Ingress ownership (hostname or path)
+	IngressInput    string
+	IngressMode     string // "hostname" or "path"
+	IngressNotFound bool
+	IngressError    string
 	Namespace       string
 	PathMatchCount  int
 	Team            *whodis.Team

@@ -1,0 +1,13 @@
+{
+  "collection": "(à la carte)",
+  "version": "2026.06.09-191526-66de7b9",
+  "scope": "repo",
+  "source_sha": "66de7b9",
+  "installed_at": "2026-06-10T06:50:22Z",
+  "files": [
+    {
+      "path": ".github/instructions/golang.instructions.md",
+      "hash": "8be854c7a6750941"
+    }
+  ]
+}
