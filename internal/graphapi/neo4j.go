@@ -83,15 +83,22 @@ func GraphSeed(ctx context.Context, drv neodriver.DriverWithContext, repo string
 	return buildPayload(nodes, rels, counts), nil
 }
 
+// graphExpandQuery is the Cypher query used by GraphExpand.
+// Exposed as a variable so tests can assert its content.
+// NaisDeployment nodes with is_active = false are excluded to prevent
+// historical deployments from flooding the graph on expand.
+var graphExpandQuery = `
+	MATCH (n) WHERE elementId(n) = $id
+	MATCH (n)-[r]-(neighbour)
+	WHERE NOT (neighbour:NaisDeployment AND neighbour.is_active = false)
+	RETURN r, neighbour`
+
 // GraphExpand returns all immediate neighbours of a node, excluding already-known nodes.
 func GraphExpand(ctx context.Context, drv neodriver.DriverWithContext, elementID string, knownIDs []string) (*GraphPayload, error) {
 	session := drv.NewSession(ctx, neodriver.SessionConfig{AccessMode: neodriver.AccessModeRead})
 	defer session.Close(ctx)
 
-	result, err := session.Run(ctx, `
-		MATCH (n) WHERE elementId(n) = $id
-		MATCH (n)-[r]-(neighbour)
-		RETURN r, neighbour`,
+	result, err := session.Run(ctx, graphExpandQuery,
 		map[string]any{"id": elementID},
 	)
 	if err != nil {

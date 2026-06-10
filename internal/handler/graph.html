@@ -171,6 +171,7 @@
           'color':                    '#1a1a2e',
           'font-family':              'system-ui, sans-serif',
           'curve-style':              'bezier',
+          'control-point-step-size':  40,
           'target-arrow-shape':       'triangle',
           'target-arrow-color':       '#1a1a2e',
           'line-color':               '#1a1a2e',
@@ -223,17 +224,26 @@
       prePositionByLabel(elements, origin);
 
       cy.add(elements);
+
+      // Lock all existing nodes so only new nodes are moved by the layout.
+      // This prevents the entire graph from being reshuffled on every expand.
+      const newNodeIds = new Set(elements.filter(e => e.group === 'nodes').map(e => e.data.id));
+      cy.nodes().forEach(n => { if (!newNodeIds.has(n.data('id'))) n.lock(); });
+
       cy.layout({
         name:              'cose',
         animate:           true,
         animationDuration: 600,
         fit:               false,
         randomize:         false,
-        nodeRepulsion:     16000,
-        idealEdgeLength:   160,
-        gravity:           0.15,
-        numIter:           1000,
-      }).run();
+        nodeRepulsion:     32000,
+        idealEdgeLength:   180,
+        edgeElasticity:    0.4,
+        gravity:           0.1,
+        numIter:           1200,
+      }).run().on('layoutstop', () => {
+        cy.nodes().unlock();
+      });
     } catch (e) {
       console.error('expand failed', e);
     } finally {

@@ -195,3 +195,9 @@ func TestGraphSeedQuery_FiltersActiveDeployments(t *testing.T) {
 		t.Error("graphSeedQuery must filter NaisDeployment nodes by is_active = true to exclude inactive deployments")
 	}
 }
+
+func TestGraphExpandQuery_FiltersActiveDeployments(t *testing.T) {
+	if !strings.Contains(graphExpandQuery, "is_active") {
+		t.Error("graphExpandQuery must filter NaisDeployment nodes by is_active = true to exclude inactive deployments")
+	}
+}
