@@ -129,31 +129,34 @@ func (c *Client) FindNamespaceByIngress(ctx context.Context, hostname string) (s
 	return "", nil
 }
 
+// findDependencyUsagesQuery is the Cypher query used by FindDependencyUsages.
+// Exposed as a variable so tests can assert its content.
+var findDependencyUsagesQuery = `MATCH (dep:Dependency)
+	 WHERE dep.name = $name
+	   AND ($version  = '' OR dep.version  = $version)
+	   AND ($ecosystem = '' OR dep.ecosystem = $ecosystem)
+	 MATCH (dep)<-[:REQUIRES]-(repo:GitHubRepository)
+	      <-[:DEPLOYED_FROM]-(d:NaisDeployment {is_active: true})
+	      <-[:ACTIVE_DEPLOYMENT]-(app:NaisApp)
+	      -[:RUNS_IMAGE]->(container:KubernetesContainer)
+	      <-[:RESOURCE]-(cluster:KubernetesCluster)
+	 MATCH (ns:KubernetesNamespace)-[:CONTAINS]->(container)
+	 RETURN DISTINCT
+	   cluster.name    AS cluster,
+	   ns.name         AS namespace,
+	   app.name        AS app,
+	   container.image AS running_image,
+	   d.commit_sha    AS deployed_commit,
+	   d.created_at    AS deployed_at
+	 ORDER BY cluster.name, ns.name, app.name`
+
 // FindDependencyUsages returns all running apps that depend on the given package.
 // version and ecosystem are optional — pass empty string to omit each filter.
 func (c *Client) FindDependencyUsages(ctx context.Context, name, version, ecosystem string) ([]DependencyUsage, error) {
 	session := c.drv.NewSession(ctx, neodriver.SessionConfig{AccessMode: neodriver.AccessModeRead})
 	defer session.Close(ctx)
 
-	result, err := session.Run(ctx,
-		`MATCH (dep:Dependency)
-		 WHERE dep.name = $name
-		   AND ($version  = '' OR dep.version  = $version)
-		   AND ($ecosystem = '' OR dep.ecosystem = $ecosystem)
-		 MATCH (dep)<-[:REQUIRES]-(repo:GitHubRepository)
-		      <-[:DEPLOYED_FROM]-(d:NaisDeployment)
-		      <-[:ACTIVE_DEPLOYMENT]-(app:NaisApp)
-		      -[:RUNS_IMAGE]->(container:KubernetesContainer)
-		      <-[:RESOURCE]-(cluster:KubernetesCluster)
-		 MATCH (ns:KubernetesNamespace)-[:CONTAINS]->(container)
-		 RETURN DISTINCT
-		   cluster.name    AS cluster,
-		   ns.name         AS namespace,
-		   app.name        AS app,
-		   container.image AS running_image,
-		   d.commit_sha    AS deployed_commit,
-		   d.created_at    AS deployed_at
-		 ORDER BY cluster.name, ns.name, app.name`,
+	result, err := session.Run(ctx, findDependencyUsagesQuery,
 		map[string]any{"name": name, "version": version, "ecosystem": ecosystem},
 	)
 	if err != nil {

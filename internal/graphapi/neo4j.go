@@ -15,18 +15,22 @@ type GraphQuerier interface {
 	GraphExpand(ctx context.Context, elementID string, knownIDs []string) (*GraphPayload, error)
 }
 
-// GraphSeed runs the shallow seed query starting from a GitHubRepository by name.
+// graphSeedQuery is the Cypher query used by GraphSeed.
+// Exposed as a variable so tests can assert its content.
+var graphSeedQuery = `
+	MATCH (repo:GitHubRepository {name: $repo})
+	OPTIONAL MATCH (repo)<-[r1:DEPLOYED_FROM]-(d:NaisDeployment)
+	              <-[r2:HAS_DEPLOYMENT]-(app:NaisApp)
+	WHERE d.is_active = true
+	OPTIONAL MATCH (app)-[r3:RUNS_IN]->(ns:KubernetesNamespace)
+	OPTIONAL MATCH (app)<-[r4:HAS_APP]-(team:NaisTeam)
+	RETURN repo, d, app, ns, team, r1, r2, r3, r4`
+
 func GraphSeed(ctx context.Context, drv neodriver.DriverWithContext, repo string) (*GraphPayload, error) {
 	session := drv.NewSession(ctx, neodriver.SessionConfig{AccessMode: neodriver.AccessModeRead})
 	defer session.Close(ctx)
 
-	result, err := session.Run(ctx, `
-		MATCH (repo:GitHubRepository {name: $repo})
-		OPTIONAL MATCH (repo)<-[r1:DEPLOYED_FROM]-(d:NaisDeployment)
-		              <-[r2:HAS_DEPLOYMENT]-(app:NaisApp)
-		OPTIONAL MATCH (app)-[r3:RUNS_IN]->(ns:KubernetesNamespace)
-		OPTIONAL MATCH (app)<-[r4:HAS_APP]-(team:NaisTeam)
-		RETURN repo, d, app, ns, team, r1, r2, r3, r4`,
+	result, err := session.Run(ctx, graphSeedQuery,
 		map[string]any{"repo": repo},
 	)
 	if err != nil {

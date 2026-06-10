@@ -1,6 +1,7 @@
 package neo4j
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -137,5 +138,11 @@ func TestDependencyUsage_ShortCommit(t *testing.T) {
 				t.Errorf("want %q, got %q", tt.want, got)
 			}
 		})
+	}
+}
+
+func TestFindDependencyUsagesQuery_FiltersActiveDeployments(t *testing.T) {
+	if !strings.Contains(findDependencyUsagesQuery, "is_active") {
+		t.Error("findDependencyUsagesQuery must filter NaisDeployment nodes by is_active = true to exclude inactive deployments")
 	}
 }

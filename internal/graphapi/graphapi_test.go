@@ -1,6 +1,7 @@
 package graphapi
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -186,5 +187,11 @@ func TestBuildNode(t *testing.T) {
 				t.Errorf("HasMore: want %v, got %v", tt.wantHasMore, node.HasMore)
 			}
 		})
+	}
+}
+
+func TestGraphSeedQuery_FiltersActiveDeployments(t *testing.T) {
+	if !strings.Contains(graphSeedQuery, "is_active") {
+		t.Error("graphSeedQuery must filter NaisDeployment nodes by is_active = true to exclude inactive deployments")
 	}
 }
