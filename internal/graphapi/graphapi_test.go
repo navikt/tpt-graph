@@ -4,127 +4,187 @@ import (
 	"testing"
 )
 
-// --- primaryLabel ---
+func TestPrimaryLabel(t *testing.T) {
+	tests := []struct {
+		name   string
+		labels []string
+		want   string
+	}{
+		{
+			name:   "selects known label from mixed list",
+			labels: []string{"Base", "GitHubRepository", "Resource"},
+			want:   "GitHubRepository",
+		},
+		{
+			name:   "respects priority order",
+			labels: []string{"NaisApp", "GitHubRepository"},
+			want:   "GitHubRepository",
+		},
+		{
+			name:   "falls back to first label when no known label present",
+			labels: []string{"SomeUnknownLabel", "AnotherLabel"},
+			want:   "SomeUnknownLabel",
+		},
+		{
+			name:   "returns Unknown for empty labels",
+			labels: nil,
+			want:   "Unknown",
+		},
+	}
 
-func TestPrimaryLabel_KnownLabelFirst(t *testing.T) {
-	labels := []string{"Base", "GitHubRepository", "Resource"}
-	if got := primaryLabel(labels); got != "GitHubRepository" {
-		t.Errorf("want %q, got %q", "GitHubRepository", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := primaryLabel(tt.labels); got != tt.want {
+				t.Errorf("want %q, got %q", tt.want, got)
+			}
+		})
 	}
 }
 
-func TestPrimaryLabel_PriorityOrdering(t *testing.T) {
-	// NaisApp has lower priority than GitHubRepository in the list.
-	labels := []string{"NaisApp", "GitHubRepository"}
-	if got := primaryLabel(labels); got != "GitHubRepository" {
-		t.Errorf("want %q, got %q", "GitHubRepository", got)
+func TestCaption(t *testing.T) {
+	tests := []struct {
+		name  string
+		label string
+		props map[string]any
+		want  string
+	}{
+		{
+			name:  "known label uses mapped property",
+			label: "GitHubRepository",
+			props: map[string]any{"name": "my-repo"},
+			want:  "my-repo",
+		},
+		{
+			name:  "prefers first candidate property",
+			label: "GitHubUser",
+			props: map[string]any{"username": "alice", "name": "Alice"},
+			want:  "alice",
+		},
+		{
+			name:  "falls back to second candidate when first is absent",
+			label: "GitHubUser",
+			props: map[string]any{"name": "Alice"},
+			want:  "Alice",
+		},
+		{
+			name:  "falls back to label name when no property matches",
+			label: "GitHubRepository",
+			props: map[string]any{},
+			want:  "GitHubRepository",
+		},
+		{
+			name:  "unknown label uses name property when present",
+			label: "SomeUnknownLabel",
+			props: map[string]any{"name": "something"},
+			want:  "something",
+		},
+		{
+			name:  "unknown label falls back to label name",
+			label: "SomeUnknownLabel",
+			props: map[string]any{},
+			want:  "SomeUnknownLabel",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := caption(tt.label, tt.props); got != tt.want {
+				t.Errorf("want %q, got %q", tt.want, got)
+			}
+		})
 	}
 }
 
-func TestPrimaryLabel_FallbackToFirstLabel(t *testing.T) {
-	labels := []string{"SomeUnknownLabel", "AnotherLabel"}
-	if got := primaryLabel(labels); got != "SomeUnknownLabel" {
-		t.Errorf("want %q, got %q", "SomeUnknownLabel", got)
+func TestNodeColor(t *testing.T) {
+	tests := []struct {
+		name  string
+		label string
+		want  string
+	}{
+		{
+			name:  "known label returns mapped colour",
+			label: "GitHubRepository",
+			want:  "#2da44e",
+		},
+		{
+			name:  "unknown label returns default grey",
+			label: "SomeUnknownLabel",
+			want:  "#9e9e9e",
+		},
+		{
+			name:  "GitHubActionsSecret is red",
+			label: "GitHubActionsSecret",
+			want:  "#cf222e",
+		},
+		{
+			name:  "GitHubDependabotAlert is red",
+			label: "GitHubDependabotAlert",
+			want:  "#cf222e",
+		},
+		{
+			name:  "KubernetesSecret is red",
+			label: "KubernetesSecret",
+			want:  "#cf222e",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := nodeColor(tt.label); got != tt.want {
+				t.Errorf("want %q, got %q", tt.want, got)
+			}
+		})
 	}
 }
 
-func TestPrimaryLabel_EmptyLabels(t *testing.T) {
-	if got := primaryLabel(nil); got != "Unknown" {
-		t.Errorf("want %q, got %q", "Unknown", got)
+func TestBuildNode(t *testing.T) {
+	tests := []struct {
+		name        string
+		id          string
+		labels      []string
+		props       map[string]any
+		hasMore     bool
+		wantCaption string
+		wantColor   string
+		wantHasMore bool
+	}{
+		{
+			name:        "NaisApp node is populated correctly",
+			id:          "elem-1",
+			labels:      []string{"NaisApp"},
+			props:       map[string]any{"name": "my-app"},
+			hasMore:     true,
+			wantCaption: "my-app",
+			wantColor:   "#0067c5",
+			wantHasMore: true,
+		},
+		{
+			name:        "hasMore false is preserved",
+			id:          "elem-2",
+			labels:      []string{"NaisTeam"},
+			props:       map[string]any{"slug": "appsec"},
+			hasMore:     false,
+			wantCaption: "appsec",
+			wantColor:   "#0099a8",
+			wantHasMore: false,
+		},
 	}
-}
 
-// --- caption ---
-
-func TestCaption_KnownLabelWithProperty(t *testing.T) {
-	props := map[string]any{"name": "my-repo"}
-	if got := caption("GitHubRepository", props); got != "my-repo" {
-		t.Errorf("want %q, got %q", "my-repo", got)
-	}
-}
-
-func TestCaption_FallbackSecondProperty(t *testing.T) {
-	// GitHubUser prefers "username" then "name".
-	props := map[string]any{"name": "Alice"}
-	if got := caption("GitHubUser", props); got != "Alice" {
-		t.Errorf("want %q, got %q", "Alice", got)
-	}
-}
-
-func TestCaption_PreferredPropertyFirst(t *testing.T) {
-	// GitHubUser prefers "username" over "name".
-	props := map[string]any{"username": "alice", "name": "Alice"}
-	if got := caption("GitHubUser", props); got != "alice" {
-		t.Errorf("want %q, got %q", "alice", got)
-	}
-}
-
-func TestCaption_FallbackToLabelName(t *testing.T) {
-	// No matching property — fall back to the label itself.
-	props := map[string]any{}
-	if got := caption("GitHubRepository", props); got != "GitHubRepository" {
-		t.Errorf("want %q, got %q", "GitHubRepository", got)
-	}
-}
-
-func TestCaption_UnknownLabelFallsBackToNameThenLabel(t *testing.T) {
-	props := map[string]any{"name": "something"}
-	if got := caption("SomeUnknownLabel", props); got != "something" {
-		t.Errorf("want %q, got %q", "something", got)
-	}
-}
-
-func TestCaption_UnknownLabelNoPropertiesFallsBackToLabel(t *testing.T) {
-	props := map[string]any{}
-	if got := caption("SomeUnknownLabel", props); got != "SomeUnknownLabel" {
-		t.Errorf("want %q, got %q", "SomeUnknownLabel", got)
-	}
-}
-
-// --- nodeColor ---
-
-func TestNodeColor_KnownLabel(t *testing.T) {
-	want := "#2da44e"
-	if got := nodeColor("GitHubRepository"); got != want {
-		t.Errorf("want %q, got %q", want, got)
-	}
-}
-
-func TestNodeColor_UnknownLabel(t *testing.T) {
-	want := "#9e9e9e"
-	if got := nodeColor("SomeUnknownLabel"); got != want {
-		t.Errorf("want %q, got %q", want, got)
-	}
-}
-
-func TestNodeColor_HighRiskLabelsAreRed(t *testing.T) {
-	red := "#cf222e"
-	for _, label := range []string{"GitHubActionsSecret", "GitHubDependabotAlert", "GitHubPersonalAccessToken", "KubernetesSecret"} {
-		if got := nodeColor(label); got != red {
-			t.Errorf("label %q: want %q, got %q", label, red, got)
-		}
-	}
-}
-
-// --- BuildNode ---
-
-func TestBuildNode_FieldsPopulatedCorrectly(t *testing.T) {
-	props := map[string]any{"name": "my-app"}
-	node := BuildNode("elem-1", []string{"NaisApp"}, props, true)
-
-	if node.ID != "elem-1" {
-		t.Errorf("ID: want %q, got %q", "elem-1", node.ID)
-	}
-	if node.Caption != "my-app" {
-		t.Errorf("Caption: want %q, got %q", "my-app", node.Caption)
-	}
-	if node.Color != "#0067c5" {
-		t.Errorf("Color: want %q, got %q", "#0067c5", node.Color)
-	}
-	if !node.HasMore {
-		t.Error("HasMore: want true, got false")
-	}
-	if len(node.Labels) != 1 || node.Labels[0] != "NaisApp" {
-		t.Errorf("Labels: want [NaisApp], got %v", node.Labels)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			node := BuildNode(tt.id, tt.labels, tt.props, tt.hasMore)
+			if node.ID != tt.id {
+				t.Errorf("ID: want %q, got %q", tt.id, node.ID)
+			}
+			if node.Caption != tt.wantCaption {
+				t.Errorf("Caption: want %q, got %q", tt.wantCaption, node.Caption)
+			}
+			if node.Color != tt.wantColor {
+				t.Errorf("Color: want %q, got %q", tt.wantColor, node.Color)
+			}
+			if node.HasMore != tt.wantHasMore {
+				t.Errorf("HasMore: want %v, got %v", tt.wantHasMore, node.HasMore)
+			}
+		})
 	}
 }

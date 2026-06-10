@@ -27,6 +27,12 @@ spec:
   env:
     - name: WHODIS_URL
       value: http://whodis
+    - name: OTEL_LOGS_EXPORTER
+      value: otlp
+  observability:
+    autoInstrumentation:
+      enabled: true
+      runtime: sdk
   envFrom:
     - secret: tpt-graph
   ingresses:

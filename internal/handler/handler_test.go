@@ -11,210 +11,213 @@ import (
 	"tpt-graph/internal/whodis"
 )
 
-// --- mocks ---
+// --- mocks (function-field pattern) ---
 
 type mockNeo4j struct {
-	namespaceByIngress string
-	namespaceByPath    []string
-	depUsages          []neo4j.DependencyUsage
-	err                error
+	findNamespaceByIngressFn func(ctx context.Context, hostname string) (string, error)
+	findNamespaceByPathFn    func(ctx context.Context, path string) ([]string, error)
+	findDependencyUsagesFn   func(ctx context.Context, name, version, ecosystem string) ([]neo4j.DependencyUsage, error)
+	findLastSyncFn           func(ctx context.Context) ([]neo4j.ModuleSync, error)
 }
 
-func (m *mockNeo4j) FindNamespaceByIngress(_ context.Context, _ string) (string, error) {
-	return m.namespaceByIngress, m.err
+func (m *mockNeo4j) FindNamespaceByIngress(ctx context.Context, hostname string) (string, error) {
+	if m.findNamespaceByIngressFn != nil {
+		return m.findNamespaceByIngressFn(ctx, hostname)
+	}
+	return "", nil
 }
 
-func (m *mockNeo4j) FindNamespaceByPath(_ context.Context, _ string) ([]string, error) {
-	return m.namespaceByPath, m.err
+func (m *mockNeo4j) FindNamespaceByPath(ctx context.Context, path string) ([]string, error) {
+	if m.findNamespaceByPathFn != nil {
+		return m.findNamespaceByPathFn(ctx, path)
+	}
+	return nil, nil
 }
 
-func (m *mockNeo4j) FindDependencyUsages(_ context.Context, _, _, _ string) ([]neo4j.DependencyUsage, error) {
-	return m.depUsages, m.err
+func (m *mockNeo4j) FindDependencyUsages(ctx context.Context, name, version, ecosystem string) ([]neo4j.DependencyUsage, error) {
+	if m.findDependencyUsagesFn != nil {
+		return m.findDependencyUsagesFn(ctx, name, version, ecosystem)
+	}
+	return nil, nil
 }
 
-func (m *mockNeo4j) FindLastSync(_ context.Context) ([]neo4j.ModuleSync, error) {
-	return nil, m.err
+func (m *mockNeo4j) FindLastSync(ctx context.Context) ([]neo4j.ModuleSync, error) {
+	if m.findLastSyncFn != nil {
+		return m.findLastSyncFn(ctx)
+	}
+	return nil, nil
 }
 
 type mockWhodis struct {
-	team *whodis.Team
-	err  error
+	lookupTeamFn func(ctx context.Context, teamSlug string) (*whodis.Team, error)
 }
 
-func (m *mockWhodis) LookupTeam(_ context.Context, _ string) (*whodis.Team, error) {
-	return m.team, m.err
-}
-
-// newTestHandler returns a Handler wired with the given mocks.
-func newTestHandler(q *mockNeo4j, w *mockWhodis) *Handler {
-	return New(q, w)
+func (m *mockWhodis) LookupTeam(ctx context.Context, teamSlug string) (*whodis.Team, error) {
+	if m.lookupTeamFn != nil {
+		return m.lookupTeamFn(ctx, teamSlug)
+	}
+	return nil, nil
 }
 
 // --- routing ---
 
-func TestRouting_Home(t *testing.T) {
-	h := newTestHandler(&mockNeo4j{}, &mockWhodis{})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("GET /: want 200, got %d", rec.Code)
+func TestRouting(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		wantStatus int
+	}{
+		{"home", "/", http.StatusOK},
+		{"graph", "/graph", http.StatusOK},
+		{"ingress", "/ingress", http.StatusOK},
+		{"dependency", "/dependency", http.StatusOK},
+		{"unknown path falls back to home", "/does-not-exist", http.StatusOK},
 	}
-}
 
-func TestRouting_Graph(t *testing.T) {
-	h := newTestHandler(&mockNeo4j{}, &mockWhodis{})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/graph", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("GET /graph: want 200, got %d", rec.Code)
-	}
-}
-
-func TestRouting_Ingress(t *testing.T) {
-	h := newTestHandler(&mockNeo4j{}, &mockWhodis{})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ingress", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("GET /ingress: want 200, got %d", rec.Code)
-	}
-}
-
-func TestRouting_Dependency(t *testing.T) {
-	h := newTestHandler(&mockNeo4j{}, &mockWhodis{})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dependency", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("GET /dependency: want 200, got %d", rec.Code)
-	}
-}
-
-func TestRouting_UnknownPathFallsBackToHome(t *testing.T) {
-	h := newTestHandler(&mockNeo4j{}, &mockWhodis{})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/does-not-exist", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("GET /does-not-exist: want 200 (home fallback), got %d", rec.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := New(&mockNeo4j{}, &mockWhodis{})
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+			if rec.Code != tt.wantStatus {
+				t.Errorf("%s: want %d, got %d", tt.path, tt.wantStatus, rec.Code)
+			}
+		})
 	}
 }
 
 // --- /ingress query parsing ---
 
-func TestIngress_NoQuery_NoDBCall(t *testing.T) {
-	q := &mockNeo4j{}
-	h := newTestHandler(q, &mockWhodis{})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ingress", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("want 200, got %d", rec.Code)
+func TestIngress(t *testing.T) {
+	tests := []struct {
+		name         string
+		query        string
+		neo4j        *mockNeo4j
+		wantStatus   int
+		wantBody     string
+		wantNoDBCall bool
+	}{
+		{
+			name:         "no query renders page without DB call",
+			query:        "",
+			neo4j:        &mockNeo4j{},
+			wantStatus:   http.StatusOK,
+			wantNoDBCall: true,
+		},
+		{
+			name:  "valid hostname URL dispatches hostname query",
+			query: "?q=https://foo.nav.no",
+			neo4j: &mockNeo4j{
+				findNamespaceByIngressFn: func(_ context.Context, hostname string) (string, error) {
+					return "appsec", nil
+				},
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:  "path-only input dispatches path query",
+			query: "?q=/some/path",
+			neo4j: &mockNeo4j{
+				findNamespaceByPathFn: func(_ context.Context, path string) ([]string, error) {
+					return []string{"appsec"}, nil
+				},
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:  "URL with path dispatches path query",
+			query: "?q=https://foo.nav.no/my/path",
+			neo4j: &mockNeo4j{
+				findNamespaceByPathFn: func(_ context.Context, path string) ([]string, error) {
+					return []string{"appsec"}, nil
+				},
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "non-URL input renders validation error",
+			query:      "?q=not-a-url",
+			neo4j:      &mockNeo4j{},
+			wantStatus: http.StatusOK,
+			wantBody:   "Invalid input",
+		},
+		{
+			name:       "URL with query params renders validation error",
+			query:      "?q=https://foo.nav.no%3Fx%3D1",
+			neo4j:      &mockNeo4j{},
+			wantStatus: http.StatusOK,
+			wantBody:   "query parameters",
+		},
+		{
+			name:       "non-HTTP scheme renders validation error",
+			query:      "?q=ftp://foo.nav.no",
+			neo4j:      &mockNeo4j{},
+			wantStatus: http.StatusOK,
+			wantBody:   "http or https",
+		},
 	}
-}
 
-func TestIngress_ValidHostnameURL_DispatchesHostnameQuery(t *testing.T) {
-	q := &mockNeo4j{namespaceByIngress: "appsec"}
-	h := newTestHandler(q, &mockWhodis{team: &whodis.Team{Slug: "appsec"}})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ingress?q=https://foo.nav.no", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("want 200, got %d", rec.Code)
-	}
-	body := rec.Body.String()
-	if body == "" {
-		t.Error("expected non-empty response body")
-	}
-}
-
-func TestIngress_PathQuery_DispatchesPathQuery(t *testing.T) {
-	q := &mockNeo4j{namespaceByPath: []string{"appsec"}}
-	h := newTestHandler(q, &mockWhodis{team: &whodis.Team{Slug: "appsec"}})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ingress?q=/some/path", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("want 200, got %d", rec.Code)
-	}
-}
-
-func TestIngress_URLWithPath_DispatchesPathQuery(t *testing.T) {
-	q := &mockNeo4j{namespaceByPath: []string{"appsec"}}
-	h := newTestHandler(q, &mockWhodis{})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ingress?q=https://foo.nav.no/my/path", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("want 200, got %d", rec.Code)
-	}
-}
-
-func TestIngress_InvalidInput_RendersValidationError(t *testing.T) {
-	q := &mockNeo4j{}
-	h := newTestHandler(q, &mockWhodis{})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ingress?q=not-a-url", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("want 200, got %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "Invalid input") {
-		t.Error("expected validation error message in response body")
-	}
-}
-
-func TestIngress_URLWithQueryParams_RendersValidationError(t *testing.T) {
-	q := &mockNeo4j{}
-	h := newTestHandler(q, &mockWhodis{})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ingress?q=https://foo.nav.no%3Fx%3D1", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("want 200, got %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "query parameters") {
-		t.Error("expected query-params validation error in response body")
-	}
-}
-
-func TestIngress_NonHTTPScheme_RendersValidationError(t *testing.T) {
-	q := &mockNeo4j{}
-	h := newTestHandler(q, &mockWhodis{})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ingress?q=ftp://foo.nav.no", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("want 200, got %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "http or https") {
-		t.Error("expected scheme validation error in response body")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := New(tt.neo4j, &mockWhodis{})
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ingress"+tt.query, nil))
+			if rec.Code != tt.wantStatus {
+				t.Errorf("want status %d, got %d", tt.wantStatus, rec.Code)
+			}
+			if tt.wantBody != "" && !strings.Contains(rec.Body.String(), tt.wantBody) {
+				t.Errorf("want body to contain %q", tt.wantBody)
+			}
+		})
 	}
 }
 
 // --- /dependency ---
 
-func TestDependency_NoName_NoDBCall(t *testing.T) {
-	q := &mockNeo4j{}
-	h := newTestHandler(q, &mockWhodis{})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dependency", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("want 200, got %d", rec.Code)
+func TestDependency(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      string
+		neo4j      *mockNeo4j
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "no name renders page without DB call",
+			query:      "",
+			neo4j:      &mockNeo4j{},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:  "name param triggers DB call and renders results",
+			query: "?name=log4j",
+			neo4j: &mockNeo4j{
+				findDependencyUsagesFn: func(_ context.Context, name, _, _ string) ([]neo4j.DependencyUsage, error) {
+					return []neo4j.DependencyUsage{{Cluster: "prod-gcp", Namespace: "appsec", App: "my-app"}}, nil
+				},
+			},
+			wantStatus: http.StatusOK,
+			wantBody:   "my-app",
+		},
+		{
+			name:       "name with no results renders not-found state",
+			query:      "?name=nonexistent-pkg",
+			neo4j:      &mockNeo4j{},
+			wantStatus: http.StatusOK,
+		},
 	}
-}
 
-func TestDependency_WithName_CallsDB(t *testing.T) {
-	q := &mockNeo4j{depUsages: []neo4j.DependencyUsage{
-		{Cluster: "prod-gcp", Namespace: "appsec", App: "my-app"},
-	}}
-	h := newTestHandler(q, &mockWhodis{})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dependency?name=log4j", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("want 200, got %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "my-app") {
-		t.Error("expected app name in response body")
-	}
-}
-
-func TestDependency_NotFound_RendersNotFound(t *testing.T) {
-	q := &mockNeo4j{depUsages: nil}
-	h := newTestHandler(q, &mockWhodis{})
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dependency?name=nonexistent-pkg", nil))
-	if rec.Code != http.StatusOK {
-		t.Errorf("want 200, got %d", rec.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := New(tt.neo4j, &mockWhodis{})
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dependency"+tt.query, nil))
+			if rec.Code != tt.wantStatus {
+				t.Errorf("want status %d, got %d", tt.wantStatus, rec.Code)
+			}
+			if tt.wantBody != "" && !strings.Contains(rec.Body.String(), tt.wantBody) {
+				t.Errorf("want body to contain %q", tt.wantBody)
+			}
+		})
 	}
 }
