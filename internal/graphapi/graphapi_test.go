@@ -199,6 +199,24 @@ func TestGraphSeedQuery_FiltersActiveDeployments(t *testing.T) {
 	}
 }
 
+func TestGraphSeedQuery_UsesRunsImageNotRunsIn(t *testing.T) {
+	if !strings.Contains(graphSeedQuery, "RUNS_IMAGE") {
+		t.Error("graphSeedQuery must use RUNS_IMAGE to ground deployments in actual running containers, not RUNS_IN")
+	}
+	if strings.Contains(graphSeedQuery, "RUNS_IN") {
+		t.Error("graphSeedQuery must not use RUNS_IN: that relationship exists for all clusters regardless of whether the app is actually running")
+	}
+}
+
+func TestGraphSeedQuery_ReturnsContainerEdges(t *testing.T) {
+	if !strings.Contains(graphSeedQuery, "r5") || !strings.Contains(graphSeedQuery, "r6") {
+		t.Error("graphSeedQuery must bind CONTAINS and RESOURCE relationships to named variables (r5, r6) so they are returned as edges")
+	}
+	if strings.Contains(graphSeedQuery, "<-[:CONTAINS]") || strings.Contains(graphSeedQuery, "<-[:RESOURCE]") {
+		t.Error("graphSeedQuery must not use anonymous relationships for CONTAINS/RESOURCE — they will be dropped from the payload")
+	}
+}
+
 func TestGraphExpandQuery_FiltersActiveDeployments(t *testing.T) {
 	if !strings.Contains(graphExpandQuery, "is_active") {
 		t.Error("graphExpandQuery must filter NaisDeployment nodes by is_active = true to exclude inactive deployments")

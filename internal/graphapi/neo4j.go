@@ -22,9 +22,11 @@ var graphSeedQuery = `
 	OPTIONAL MATCH (repo)<-[r1:DEPLOYED_FROM]-(d:NaisDeployment)
 	              <-[r2:HAS_DEPLOYMENT]-(app:NaisApp)
 	WHERE d.is_active = true
-	OPTIONAL MATCH (app)-[r3:RUNS_IN]->(ns:KubernetesNamespace)
+	OPTIONAL MATCH (app)-[r3:RUNS_IMAGE]->(c:KubernetesContainer)
+	              <-[r5:CONTAINS]-(ns:KubernetesNamespace)
+	              <-[r6:RESOURCE]-(cluster:KubernetesCluster)
 	OPTIONAL MATCH (app)<-[r4:HAS_APP]-(team:NaisTeam)
-	RETURN repo, d, app, ns, team, r1, r2, r3, r4`
+	RETURN repo, d, app, c, ns, cluster, team, r1, r2, r3, r4, r5, r6`
 
 func GraphSeed(ctx context.Context, drv neodriver.DriverWithContext, repo string) (*GraphPayload, error) {
 	session := drv.NewSession(ctx, neodriver.SessionConfig{AccessMode: neodriver.AccessModeRead})
@@ -42,7 +44,7 @@ func GraphSeed(ctx context.Context, drv neodriver.DriverWithContext, repo string
 
 	for result.Next(ctx) {
 		rec := result.Record()
-		for _, key := range []string{"repo", "d", "app", "ns", "team"} {
+		for _, key := range []string{"repo", "d", "app", "c", "ns", "cluster", "team"} {
 			val, ok := rec.Get(key)
 			if !ok || val == nil {
 				continue
@@ -51,7 +53,7 @@ func GraphSeed(ctx context.Context, drv neodriver.DriverWithContext, repo string
 				nodes[n.ElementId] = n
 			}
 		}
-		for _, key := range []string{"r1", "r2", "r3", "r4"} {
+		for _, key := range []string{"r1", "r2", "r3", "r4", "r5", "r6"} {
 			val, ok := rec.Get(key)
 			if !ok || val == nil {
 				continue

@@ -122,18 +122,18 @@
       {
         selector: 'node',
         style: {
-          'label':              'data(caption)',
+          'label':              'data(label)',
           'background-color':   'data(color)',
           'color':              '#fff',
           'text-valign':        'center',
           'text-halign':        'center',
-          'font-size':          '11px',
+          'font-size':          '10px',
           'font-weight':        'bold',
           'font-family':        'system-ui, sans-serif',
           'text-wrap':          'wrap',
-          'text-max-width':     '90px',
-          'width':              70,
-          'height':             70,
+          'text-max-width':     '80px',
+          'width':              80,
+          'height':             80,
           'border-width':       0,
           'border-color':       '#333',
           'text-outline-width': 2,
@@ -159,12 +159,13 @@
       {
         selector: 'node[?isSummary]',
         style: {
+          'label':              'data(caption)',
           'background-color':   '#7a7a9a',
           'border-width':        3,
           'border-style':       'dashed',
           'border-color':       '#444',
           'font-size':          '10px',
-          'text-max-width':     '80px',
+          'text-max-width':     '70px',
           'width':               60,
           'height':              60,
           'text-outline-color': '#7a7a9a',
@@ -176,8 +177,8 @@
           'border-width':  4,
           'border-style':  'solid',
           'border-color':  '#333',
-          'width':         84,
-          'height':        84,
+          'width':         96,
+          'height':        96,
         }
       },
       {
@@ -211,8 +212,8 @@
   const childrenOf    = new Map();       // nodeId → Set of element IDs added by that expand
   let expanding = false;                 // prevent concurrent expands
 
-  // ── Tap handler — expand real nodes or expand a summary node ────────────────
-  cy.on('tap', 'node', async function (evt) {
+  // ── Tap handler — sidebar and summary-group expand ──────────────────────────
+  cy.on('tap', 'node', function (evt) {
     const node = evt.target;
     const data = node.data();
 
@@ -222,11 +223,60 @@
       return;
     }
 
-    // Always update sidebar for real nodes.
+    // Update sidebar for real nodes.
     showSidebar(data);
+  });
 
-    // Expand if eligible.
-    if (!data.hasMore || expandedNodes.has(data.id) || expanding) return;
+  // ── Double-tap handler — expand or collapse a real node ─────────────────────
+  cy.on('dbltap', 'node', async function (evt) {
+    const node = evt.target;
+    const data = node.data();
+
+    // Summary nodes are handled by single-tap; ignore here.
+    if (data.isSummary) return;
+
+    // ── Collapse if already expanded ─────────────────────────────────────────
+    if (expandedNodes.has(data.id)) {
+      const id         = data.id;
+      const introduced = childrenOf.get(id) || new Set();
+
+      // Collect nodes to remove: those introduced by this expand that have no
+      // connections to nodes outside the introduced set (other than back to the
+      // collapsed node itself).
+      const toRemove = cy.collection();
+      introduced.forEach(eid => {
+        const el = cy.getElementById(eid);
+        if (el.length === 0 || el.isEdge()) return;
+
+        const hasExternalConnection = el.connectedEdges().some(edge => {
+          const other = edge.source().data('id') === eid
+            ? edge.target().data('id')
+            : edge.source().data('id');
+          return other !== id && !introduced.has(other);
+        });
+
+        if (!hasExternalConnection) toRemove.merge(el);
+      });
+
+      // Remove the orphaned nodes — their edges are removed automatically.
+      toRemove.remove();
+
+      // Also remove any introduced edges that are now dangling.
+      introduced.forEach(eid => {
+        const el = cy.getElementById(eid);
+        if (el.length > 0 && el.isEdge()) el.remove();
+      });
+
+      // Reset state so the node can be re-expanded.
+      expandedNodes.delete(id);
+      childrenOf.delete(id);
+      node.removeClass('expanded');
+      node.data('hasMore', true);
+      return;
+    }
+
+    // ── Expand if eligible ────────────────────────────────────────────────────
+    if (!data.hasMore || expanding) return;
 
     expanding = true;
     expandedNodes.add(data.id);
@@ -297,49 +347,6 @@
     } finally {
       expanding = false;
     }
-  });
-
-  // ── Collapse handler (double-tap) ───────────────────────────────────────────
-  cy.on('dbltap', 'node', function (evt) {
-    const node = evt.target;
-    const id   = node.data('id');
-
-    if (!expandedNodes.has(id)) return;
-
-    const introduced = childrenOf.get(id) || new Set();
-
-    // Collect nodes to remove: those introduced by this expand that have no
-    // connections to nodes outside the introduced set (other than back to the
-    // collapsed node itself).
-    const toRemove = cy.collection();
-    introduced.forEach(eid => {
-      const el = cy.getElementById(eid);
-      if (el.length === 0 || el.isEdge()) return;
-
-      const hasExternalConnection = el.connectedEdges().some(edge => {
-        const other = edge.source().data('id') === eid
-          ? edge.target().data('id')
-          : edge.source().data('id');
-        return other !== id && !introduced.has(other);
-      });
-
-      if (!hasExternalConnection) toRemove.merge(el);
-    });
-
-    // Remove the orphaned nodes — their edges are removed automatically.
-    toRemove.remove();
-
-    // Also remove any introduced edges that are now dangling.
-    introduced.forEach(eid => {
-      const el = cy.getElementById(eid);
-      if (el.length > 0 && el.isEdge()) el.remove();
-    });
-
-    // Reset state so the node can be re-expanded.
-    expandedNodes.delete(id);
-    childrenOf.delete(id);
-    node.removeClass('expanded');
-    node.data('hasMore', true);
   });
 
   // ── Form submit ─────────────────────────────────────────────────────────────
@@ -436,6 +443,8 @@
         data:  {
           id:         n.id,
           caption:    n.caption,
+          nodeType:   n.nodeType,
+          label:      n.caption + '\n' + n.nodeType,
           color:      n.color,
           hasMore:    n.hasMore,
           labels:     n.labels,

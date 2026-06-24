@@ -10,6 +10,7 @@ type GraphPayload struct {
 type GraphNode struct {
 	ID         string         `json:"id"`
 	Labels     []string       `json:"labels"`
+	NodeType   string         `json:"nodeType"`
 	Caption    string         `json:"caption"`
 	Color      string         `json:"color"`
 	HasMore    bool           `json:"hasMore"`
@@ -140,6 +141,7 @@ func BuildNode(id string, labels []string, props map[string]any, hasMore bool) G
 	return GraphNode{
 		ID:         id,
 		Labels:     labels,
+		NodeType:   lbl,
 		Caption:    caption(lbl, props),
 		Color:      nodeColor(lbl),
 		HasMore:    hasMore,
