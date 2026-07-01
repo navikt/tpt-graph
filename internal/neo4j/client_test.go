@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	neodriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
 func TestModuleSync_FormattedTime(t *testing.T) {
@@ -144,5 +146,59 @@ func TestDependencyUsage_ShortCommit(t *testing.T) {
 func TestFindDependencyUsagesQuery_FiltersActiveDeployments(t *testing.T) {
 	if !strings.Contains(findDependencyUsagesQuery, "is_active") {
 		t.Error("findDependencyUsagesQuery must filter NaisDeployment nodes by is_active = true to exclude inactive deployments")
+	}
+}
+
+func TestFindNamespaceByIngressQuery_ResolvesWorkloads(t *testing.T) {
+	for _, want := range []string{"TARGETS", "WORKLOAD_PARENT", "RUNS_IMAGE", "NaisApp"} {
+		if !strings.Contains(findNamespaceByIngressQuery, want) {
+			t.Errorf("findNamespaceByIngressQuery must traverse %q to resolve the owning Nais workload", want)
+		}
+	}
+}
+
+func TestFindNamespaceByPathQuery_ResolvesWorkloads(t *testing.T) {
+	for _, want := range []string{"TARGETS", "WORKLOAD_PARENT", "RUNS_IMAGE", "NaisApp"} {
+		if !strings.Contains(findNamespaceByPathQuery, want) {
+			t.Errorf("findNamespaceByPathQuery must traverse %q to resolve the owning Nais workload", want)
+		}
+	}
+}
+
+func TestStringSliceField(t *testing.T) {
+	tests := []struct {
+		name string
+		rec  *neodriver.Record
+		want []string
+	}{
+		{
+			name: "collect() result with values",
+			rec:  &neodriver.Record{Keys: []string{"workloads"}, Values: []any{[]any{"tpt-graph", "tpt-backend"}}},
+			want: []string{"tpt-graph", "tpt-backend"},
+		},
+		{
+			name: "collect() result with null entries from unmatched OPTIONAL MATCH is filtered out",
+			rec:  &neodriver.Record{Keys: []string{"workloads"}, Values: []any{[]any{nil, "tpt-graph", ""}}},
+			want: []string{"tpt-graph"},
+		},
+		{
+			name: "missing key returns nil",
+			rec:  &neodriver.Record{Keys: []string{}, Values: []any{}},
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stringSliceField(tt.rec, "workloads")
+			if len(got) != len(tt.want) {
+				t.Fatalf("want %v, got %v", tt.want, got)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("index %d: want %q, got %q", i, tt.want[i], got[i])
+				}
+			}
+		})
 	}
 }

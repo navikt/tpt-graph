@@ -319,6 +319,12 @@
         cy.animate({ fit: { eles: cy.elements(), padding: 60 } }, { duration: 500 });
       } else {
         seedPositionsByRelationship(allElements, data.id, hubPos, existingBB, null);
+
+        // Lock all existing nodes before adding new ones so fcose only moves
+        // the newly introduced subgraph. Unlock them after layout completes.
+        const preExisting = cy.nodes().filter(n => !newNodeIds.has(n.data('id')));
+        preExisting.lock();
+
         cy.add(allElements);
         cy.layout({
           name:                        'fcose',
@@ -340,6 +346,7 @@
           tile:                        true,
           tilingPaddingVertical:       30,
           tilingPaddingHorizontal:     30,
+          stop() { preExisting.unlock(); },
         }).run();
       }
     } catch (e) {
@@ -649,9 +656,11 @@
   }
 
   // ── Seed positions for new nodes by relationship type ───────────────────────
-  // Places each relationship group in its own sector within the free arc.
-  // When freeArc is null (full re-render path) positions are still seeded
-  // so fcose starts from a grouped state.
+  // Places each relationship-type group in its own sector radiating directly
+  // from the hub node. The ring origin is the hub position itself, so groups
+  // always fan out from where the click happened regardless of graph size.
+  // When freeArc is null (full re-render path) positions are still seeded so
+  // fcose starts from a grouped, separated state.
   function seedPositionsByRelationship(elements, hubId, origin, existingBB, freeArc) {
     const nodeEls = elements.filter(e => e.group === 'nodes');
     const edgeEls = elements.filter(e => e.group === 'edges');
@@ -673,13 +682,11 @@
       groups[key].push(el);
     });
 
-    const groupList  = Object.values(groups);
-    const numGroups  = groupList.length;
-    const halfDiag   = Math.sqrt(existingBB.w ** 2 + existingBB.h ** 2) / 2;
-    const ringRadius = halfDiag + 350;
-    const innerSpread = 100;
-    const graphCx    = existingBB.x1 + existingBB.w / 2;
-    const graphCy    = existingBB.y1 + existingBB.h / 2;
+    const groupList   = Object.values(groups);
+    const numGroups   = groupList.length;
+    // Fixed ring radius from the hub — independent of how large the graph has grown.
+    const ringRadius  = 300;
+    const innerSpread = 110;
 
     groupList.forEach((nodes, groupIdx) => {
       let angle;
@@ -692,8 +699,9 @@
         angle = (2 * Math.PI * groupIdx) / numGroups - Math.PI / 2;
       }
 
-      const cx = graphCx + ringRadius * Math.cos(angle);
-      const cy = graphCy + ringRadius * Math.sin(angle);
+      // Place cluster centre at fixed distance from the hub node itself.
+      const cx = origin.x + ringRadius * Math.cos(angle);
+      const cy = origin.y + ringRadius * Math.sin(angle);
 
       nodes.forEach((el, i) => {
         const cols = Math.ceil(Math.sqrt(nodes.length));

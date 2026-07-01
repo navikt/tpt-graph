@@ -14,20 +14,20 @@ import (
 // --- mocks (function-field pattern) ---
 
 type mockNeo4j struct {
-	findNamespaceByIngressFn func(ctx context.Context, hostname string) (string, error)
-	findNamespaceByPathFn    func(ctx context.Context, path string) ([]string, error)
+	findNamespaceByIngressFn func(ctx context.Context, hostname string) (neo4j.IngressMatch, error)
+	findNamespaceByPathFn    func(ctx context.Context, path string) ([]neo4j.IngressMatch, error)
 	findDependencyUsagesFn   func(ctx context.Context, name, version, ecosystem string) ([]neo4j.DependencyUsage, error)
 	findLastSyncFn           func(ctx context.Context) ([]neo4j.ModuleSync, error)
 }
 
-func (m *mockNeo4j) FindNamespaceByIngress(ctx context.Context, hostname string) (string, error) {
+func (m *mockNeo4j) FindNamespaceByIngress(ctx context.Context, hostname string) (neo4j.IngressMatch, error) {
 	if m.findNamespaceByIngressFn != nil {
 		return m.findNamespaceByIngressFn(ctx, hostname)
 	}
-	return "", nil
+	return neo4j.IngressMatch{}, nil
 }
 
-func (m *mockNeo4j) FindNamespaceByPath(ctx context.Context, path string) ([]string, error) {
+func (m *mockNeo4j) FindNamespaceByPath(ctx context.Context, path string) ([]neo4j.IngressMatch, error) {
 	if m.findNamespaceByPathFn != nil {
 		return m.findNamespaceByPathFn(ctx, path)
 	}
@@ -108,18 +108,19 @@ func TestIngress(t *testing.T) {
 			name:  "valid hostname URL dispatches hostname query",
 			query: "?q=https://foo.nav.no",
 			neo4j: &mockNeo4j{
-				findNamespaceByIngressFn: func(_ context.Context, hostname string) (string, error) {
-					return "appsec", nil
+				findNamespaceByIngressFn: func(_ context.Context, hostname string) (neo4j.IngressMatch, error) {
+					return neo4j.IngressMatch{Namespace: "appsec", Workloads: []string{"tpt-graph"}}, nil
 				},
 			},
 			wantStatus: http.StatusOK,
+			wantBody:   "tpt-graph",
 		},
 		{
 			name:  "path-only input dispatches path query",
 			query: "?q=/some/path",
 			neo4j: &mockNeo4j{
-				findNamespaceByPathFn: func(_ context.Context, path string) ([]string, error) {
-					return []string{"appsec"}, nil
+				findNamespaceByPathFn: func(_ context.Context, path string) ([]neo4j.IngressMatch, error) {
+					return []neo4j.IngressMatch{{Namespace: "appsec", Workloads: []string{"tpt-graph"}}}, nil
 				},
 			},
 			wantStatus: http.StatusOK,
@@ -128,8 +129,8 @@ func TestIngress(t *testing.T) {
 			name:  "URL with path dispatches path query",
 			query: "?q=https://foo.nav.no/my/path",
 			neo4j: &mockNeo4j{
-				findNamespaceByPathFn: func(_ context.Context, path string) ([]string, error) {
-					return []string{"appsec"}, nil
+				findNamespaceByPathFn: func(_ context.Context, path string) ([]neo4j.IngressMatch, error) {
+					return []neo4j.IngressMatch{{Namespace: "appsec", Workloads: []string{"tpt-graph"}}}, nil
 				},
 			},
 			wantStatus: http.StatusOK,
@@ -154,6 +155,17 @@ func TestIngress(t *testing.T) {
 			neo4j:      &mockNeo4j{},
 			wantStatus: http.StatusOK,
 			wantBody:   "http or https",
+		},
+		{
+			name:  "hostname match with no resolved workload renders warning",
+			query: "?q=https://foo.nav.no",
+			neo4j: &mockNeo4j{
+				findNamespaceByIngressFn: func(_ context.Context, hostname string) (neo4j.IngressMatch, error) {
+					return neo4j.IngressMatch{Namespace: "appsec"}, nil
+				},
+			},
+			wantStatus: http.StatusOK,
+			wantBody:   "No Nais workload could be resolved",
 		},
 	}
 

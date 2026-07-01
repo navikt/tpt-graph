@@ -20,6 +20,15 @@
     <div class="card-value">{{.Namespace}}</div>
   </div>
 
+  {{if .Workloads}}
+  <div class="card card-found">
+    <div class="card-label">Nais workload{{if gt (len .Workloads) 1}}s{{end}}</div>
+    <div class="card-value">{{range $i, $w := .Workloads}}{{if $i}}, {{end}}{{$w}}{{end}}</div>
+  </div>
+  {{else}}
+  <div class="card card-warn">No Nais workload could be resolved for this ingress.</div>
+  {{end}}
+
   {{if .Team}}
   <div class="card card-info">
     <div class="team-header">

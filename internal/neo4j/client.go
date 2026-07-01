@@ -93,40 +93,56 @@ func (c *Client) VerifyConnectivity(ctx context.Context) error {
 	return c.drv.VerifyConnectivity(ctx)
 }
 
-// FindNamespaceByIngress returns the Kubernetes namespace that owns the given ingress hostname.
-// hostname is matched with a CONTAINS check against the stored host_names list.
-// Returns ("", nil) when the query succeeds but no namespace is found.
-func (c *Client) FindNamespaceByIngress(ctx context.Context, hostname string) (string, error) {
+// IngressMatch represents a resolved ingress ownership result: the
+// Kubernetes namespace the ingress lives in, plus the Nais workloads whose
+// running containers are actually routed to by that ingress (traversed via
+// KubernetesIngress -[:TARGETS]-> KubernetesService -[:TARGETS]-> KubernetesPod
+// <-[:WORKLOAD_PARENT]- KubernetesContainer <-[:RUNS_IMAGE]- NaisApp).
+// Workloads is empty when cartography hasn't resolved that chain for the
+// ingress (e.g. a non-Nais-managed ingress).
+type IngressMatch struct {
+	Namespace string
+	Workloads []string
+}
+
+// findNamespaceByIngressQuery is the Cypher query used by FindNamespaceByIngress.
+// Exposed as a variable so tests can assert its content.
+var findNamespaceByIngressQuery = `
+	MATCH (ns:KubernetesNamespace)-[:CONTAINS]->(ing:KubernetesIngress)
+	WHERE ANY(host IN ing.host_names WHERE host CONTAINS $hostname)
+	WITH ns, ing LIMIT 1
+	OPTIONAL MATCH (ing)-[:TARGETS]->(:KubernetesService)-[:TARGETS]->(:KubernetesPod)
+	              <-[:WORKLOAD_PARENT]-(:KubernetesContainer)<-[:RUNS_IMAGE]-(app:NaisApp)
+	RETURN ns.name AS namespace, collect(DISTINCT app.name) AS workloads`
+
+// FindNamespaceByIngress returns the Kubernetes namespace and Nais workloads that
+// own the given ingress hostname. hostname is matched with a CONTAINS check
+// against the stored host_names list. Returns a zero-value IngressMatch when
+// the query succeeds but no namespace is found.
+func (c *Client) FindNamespaceByIngress(ctx context.Context, hostname string) (IngressMatch, error) {
 	session := c.drv.NewSession(ctx, neodriver.SessionConfig{AccessMode: neodriver.AccessModeRead})
 	defer session.Close(ctx)
 
-	result, err := session.Run(ctx,
-		`MATCH (ns:KubernetesNamespace)-[:CONTAINS]->(ing:KubernetesIngress)
-		 WHERE ANY(host IN ing.host_names WHERE host CONTAINS $hostname)
-		 RETURN ns.name AS namespace LIMIT 1`,
+	result, err := session.Run(ctx, findNamespaceByIngressQuery,
 		map[string]any{"hostname": hostname},
 	)
 	if err != nil {
-		return "", fmt.Errorf("query failed: %w", err)
+		return IngressMatch{}, fmt.Errorf("query failed: %w", err)
 	}
 
 	if result.Next(ctx) {
-		val, ok := result.Record().Get("namespace")
-		if !ok {
-			return "", nil
-		}
-		name, ok := val.(string)
-		if !ok {
-			return "", nil
-		}
-		return name, nil
+		rec := result.Record()
+		return IngressMatch{
+			Namespace: stringField(rec, "namespace"),
+			Workloads: stringSliceField(rec, "workloads"),
+		}, nil
 	}
 
 	if err := result.Err(); err != nil {
-		return "", fmt.Errorf("result iteration: %w", err)
+		return IngressMatch{}, fmt.Errorf("result iteration: %w", err)
 	}
 
-	return "", nil
+	return IngressMatch{}, nil
 }
 
 // findDependencyUsagesQuery is the Cypher query used by FindDependencyUsages.
@@ -182,32 +198,43 @@ func (c *Client) FindDependencyUsages(ctx context.Context, name, version, ecosys
 	return usages, nil
 }
 
-// FindNamespaceByPath returns the distinct namespaces of all ingresses whose
-// rules contain the given path fragment.
-func (c *Client) FindNamespaceByPath(ctx context.Context, path string) ([]string, error) {
+// findNamespaceByPathQuery is the Cypher query used by FindNamespaceByPath.
+// Exposed as a variable so tests can assert its content.
+var findNamespaceByPathQuery = `
+	MATCH (ing:KubernetesIngress)
+	WHERE ing.rules CONTAINS $path
+	OPTIONAL MATCH (ing)-[:TARGETS]->(:KubernetesService)-[:TARGETS]->(:KubernetesPod)
+	              <-[:WORKLOAD_PARENT]-(:KubernetesContainer)<-[:RUNS_IMAGE]-(app:NaisApp)
+	RETURN ing.namespace AS namespace, collect(DISTINCT app.name) AS workloads
+	ORDER BY namespace`
+
+// FindNamespaceByPath returns, for each distinct namespace whose ingresses have
+// rules containing the given path fragment, the namespace and the Nais
+// workloads routed to by those ingresses.
+func (c *Client) FindNamespaceByPath(ctx context.Context, path string) ([]IngressMatch, error) {
 	session := c.drv.NewSession(ctx, neodriver.SessionConfig{AccessMode: neodriver.AccessModeRead})
 	defer session.Close(ctx)
 
-	result, err := session.Run(ctx,
-		`MATCH (ing:KubernetesIngress)
-		 WHERE ing.rules CONTAINS $path
-		 RETURN DISTINCT ing.namespace AS namespace
-		 ORDER BY namespace`,
+	result, err := session.Run(ctx, findNamespaceByPathQuery,
 		map[string]any{"path": path},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("path query failed: %w", err)
 	}
 
-	var namespaces []string
+	var matches []IngressMatch
 	for result.Next(ctx) {
-		namespaces = append(namespaces, stringField(result.Record(), "namespace"))
+		rec := result.Record()
+		matches = append(matches, IngressMatch{
+			Namespace: stringField(rec, "namespace"),
+			Workloads: stringSliceField(rec, "workloads"),
+		})
 	}
 	if err := result.Err(); err != nil {
 		return nil, fmt.Errorf("result iteration: %w", err)
 	}
 
-	return namespaces, nil
+	return matches, nil
 }
 
 // Returns an empty string if the field is absent or not a string.
@@ -218,6 +245,27 @@ func stringField(rec *neodriver.Record, key string) string {
 	}
 	s, _ := val.(string)
 	return s
+}
+
+// stringSliceField returns a []string for a collect()-produced field, skipping
+// any non-string or empty entries (e.g. the null collected when an OPTIONAL
+// MATCH found no NaisApp).
+func stringSliceField(rec *neodriver.Record, key string) []string {
+	val, ok := rec.Get(key)
+	if !ok || val == nil {
+		return nil
+	}
+	raw, ok := val.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // FindLastSync returns the most recent lastupdated timestamp per Cartography module.

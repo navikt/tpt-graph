@@ -23,8 +23,8 @@ var staticFiles embed.FS
 
 // Neo4jQuerier is the only interface the handler depends on for graph queries.
 type Neo4jQuerier interface {
-	FindNamespaceByIngress(ctx context.Context, hostname string) (string, error)
-	FindNamespaceByPath(ctx context.Context, path string) ([]string, error)
+	FindNamespaceByIngress(ctx context.Context, hostname string) (neo4j.IngressMatch, error)
+	FindNamespaceByPath(ctx context.Context, path string) ([]neo4j.IngressMatch, error)
 	FindDependencyUsages(ctx context.Context, name, version, ecosystem string) ([]neo4j.DependencyUsage, error)
 	FindLastSync(ctx context.Context) ([]neo4j.ModuleSync, error)
 }
@@ -154,37 +154,39 @@ func (h *Handler) runPathSearch(r *http.Request, data *pageData, path string) {
 // queryByHostname looks up the namespace (and team) for a given hostname.
 func (h *Handler) queryByHostname(ctx context.Context, data *pageData, hostname string) {
 	data.IngressMode = "hostname"
-	ns, err := h.neo4j.FindNamespaceByIngress(ctx, hostname)
+	match, err := h.neo4j.FindNamespaceByIngress(ctx, hostname)
 	if err != nil {
 		slog.Error("neo4j ingress query failed", "err", err)
 		data.IngressError = "Database query failed — please try again later."
 		return
 	}
-	if ns == "" {
+	if match.Namespace == "" {
 		data.IngressNotFound = true
 		return
 	}
-	data.Namespace = ns
-	h.lookupTeam(ctx, data, ns)
+	data.Namespace = match.Namespace
+	data.Workloads = match.Workloads
+	h.lookupTeam(ctx, data, match.Namespace)
 }
 
 // queryByPath looks up namespace(s) for a given path fragment.
 func (h *Handler) queryByPath(ctx context.Context, data *pageData, path string) {
 	data.IngressMode = "path"
-	namespaces, err := h.neo4j.FindNamespaceByPath(ctx, path)
+	matches, err := h.neo4j.FindNamespaceByPath(ctx, path)
 	if err != nil {
 		slog.Error("neo4j path query failed", "err", err)
 		data.IngressError = "Database query failed — please try again later."
 		return
 	}
-	switch len(namespaces) {
+	switch len(matches) {
 	case 0:
 		data.IngressNotFound = true
 	case 1:
-		data.Namespace = namespaces[0]
-		h.lookupTeam(ctx, data, namespaces[0])
+		data.Namespace = matches[0].Namespace
+		data.Workloads = matches[0].Workloads
+		h.lookupTeam(ctx, data, matches[0].Namespace)
 	default:
-		data.PathMatchCount = len(namespaces)
+		data.PathMatchCount = len(matches)
 	}
 }
 
@@ -263,6 +265,7 @@ type pageData struct {
 	IngressNotFound bool
 	IngressError    string
 	Namespace       string
+	Workloads       []string
 	PathMatchCount  int
 	Team            *whodis.Team
 	TeamUnavailable bool
