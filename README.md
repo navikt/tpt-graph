@@ -7,6 +7,7 @@ Attack path mapping tool for the appsec and isoc teams at Nav. A read-only web i
 `NEO4J_PASSWORD` is sourced automatically from fnox. Once it is set in your shell:
 
 ```bash
+kubectl port-forward -n appsec $(kubectl get pod -n appsec -l app=neo4j -o jsonpath='{.items[0].metadata.name}') 7474:7474 7687:7687
 make run-local
 ```
 
