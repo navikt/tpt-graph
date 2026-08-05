@@ -143,6 +143,28 @@ func TestDependencyUsage_ShortCommit(t *testing.T) {
 	}
 }
 
+func TestVersionToRegex(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"", ""},
+		{"1.2.3", `^1\.2\.3$`},
+		{"4.*", `^4\..*$`},
+		{"*", `^.*$`},
+		{"1.2.*", `^1\.2\..*$`},
+		{"*.*.3", `^.*\..*\.3$`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := versionToRegex(tt.input)
+			if got != tt.want {
+				t.Errorf("versionToRegex(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFindDependencyUsagesQuery_FiltersActiveDeployments(t *testing.T) {
 	if !strings.Contains(findDependencyUsagesQuery, "is_active") {
 		t.Error("findDependencyUsagesQuery must filter NaisDeployment nodes by is_active = true to exclude inactive deployments")

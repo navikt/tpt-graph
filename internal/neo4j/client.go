@@ -3,6 +3,7 @@ package neo4j
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ type DependencyUsage struct {
 	Cluster        string
 	Namespace      string
 	App            string
+	Version        string
 	RunningImage   string
 	DeployedCommit string
 	DeployedAt     string
@@ -149,7 +151,7 @@ func (c *Client) FindNamespaceByIngress(ctx context.Context, hostname string) (I
 // Exposed as a variable so tests can assert its content.
 var findDependencyUsagesQuery = `MATCH (dep:Dependency)
 	 WHERE dep.name = $name
-	   AND ($version  = '' OR dep.version  = $version)
+	   AND ($version  = '' OR dep.version  =~ $version)
 	   AND ($ecosystem = '' OR dep.ecosystem = $ecosystem)
 	 MATCH (dep)<-[:REQUIRES]-(repo:GitHubRepository)
 	      <-[:DEPLOYED_FROM]-(d:NaisDeployment {is_active: true})
@@ -161,19 +163,39 @@ var findDependencyUsagesQuery = `MATCH (dep:Dependency)
 	   cluster.name    AS cluster,
 	   ns.name         AS namespace,
 	   app.name        AS app,
+	   dep.version     AS dep_version,
 	   container.image AS running_image,
 	   d.commit_sha    AS deployed_commit,
 	   d.created_at    AS deployed_at
 	 ORDER BY cluster.name, ns.name, app.name`
 
+// versionToRegex converts a user-supplied version string to a Neo4j-compatible
+// regex pattern. An empty string is returned unchanged (the query treats it as
+// "match all"). A plain version like "1.2.3" is anchored to an exact match.
+// Glob-style wildcards (*) are expanded to ".*", allowing patterns such as
+// "4.*" to match any 4.x release across an entire ecosystem.
+func versionToRegex(v string) string {
+	if v == "" {
+		return v
+	}
+	// Split on '*', escape all other regex metacharacters in each segment,
+	// then rejoin with '.*'.
+	parts := strings.Split(v, "*")
+	for i, p := range parts {
+		parts[i] = regexp.QuoteMeta(p)
+	}
+	return "^" + strings.Join(parts, ".*") + "$"
+}
+
 // FindDependencyUsages returns all running apps that depend on the given package.
 // version and ecosystem are optional — pass empty string to omit each filter.
+// version supports glob-style wildcards: e.g. "4.*" matches any 4.x release.
 func (c *Client) FindDependencyUsages(ctx context.Context, name, version, ecosystem string) ([]DependencyUsage, error) {
 	session := c.drv.NewSession(ctx, neodriver.SessionConfig{AccessMode: neodriver.AccessModeRead})
 	defer session.Close(ctx)
 
 	result, err := session.Run(ctx, findDependencyUsagesQuery,
-		map[string]any{"name": name, "version": version, "ecosystem": ecosystem},
+		map[string]any{"name": name, "version": versionToRegex(version), "ecosystem": ecosystem},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("dependency query failed: %w", err)
@@ -186,6 +208,7 @@ func (c *Client) FindDependencyUsages(ctx context.Context, name, version, ecosys
 			Cluster:        stringField(rec, "cluster"),
 			Namespace:      stringField(rec, "namespace"),
 			App:            stringField(rec, "app"),
+			Version:        stringField(rec, "dep_version"),
 			RunningImage:   stringField(rec, "running_image"),
 			DeployedCommit: stringField(rec, "deployed_commit"),
 			DeployedAt:     stringField(rec, "deployed_at"),
