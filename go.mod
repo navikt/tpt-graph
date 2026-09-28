@@ -3,7 +3,7 @@ module tpt-graph
 go 1.26.3
 
 require (
-	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
+	github.com/neo4j/neo4j-go-driver/v5 v5.28.5
 	github.com/prometheus/client_golang v1.24.1
 	go.opentelemetry.io/contrib/exporters/autoexport v0.71.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0
