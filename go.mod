@@ -1,6 +1,6 @@
 module tpt-graph
 
-go 1.26.3
+go 1.27
 
 require (
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.5
