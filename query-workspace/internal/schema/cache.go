@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"go.opentelemetry.io/otel/trace"
+	"tpt-graph/query-workspace/internal/observability"
 )
 
 const MaxBytes = 512_000
@@ -50,6 +53,8 @@ func (c *Cache) Current(ctx context.Context) (Snapshot, error) {
 }
 
 func (c *Cache) Refresh(ctx context.Context) (refreshErr error) {
+	ctx, end := observability.StartSpan(ctx, "schema.refresh", trace.SpanKindInternal)
+	defer func() { end(refreshErr) }()
 	defer func() {
 		c.refreshFailed.Store(refreshErr != nil)
 	}()
@@ -76,7 +81,7 @@ func (c *Cache) Refresh(ctx context.Context) (refreshErr error) {
 	if err := c.store.SaveSchema(ctx, snapshot); err != nil {
 		return fmt.Errorf("persisting schema snapshot: %w", err)
 	}
-	c.logger.Info("schema snapshot refreshed", "schema_sha256", snapshot.Hash,
+	c.logger.InfoContext(ctx, "schema snapshot refreshed", "schema_sha256", snapshot.Hash,
 		"captured_at", snapshot.CapturedAt, "method", snapshot.Method, "bytes", len(text))
 	return nil
 }

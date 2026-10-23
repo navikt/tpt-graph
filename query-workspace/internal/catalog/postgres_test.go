@@ -2,15 +2,61 @@ package catalog
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"tpt-graph/query-workspace/internal/schema"
 	"tpt-graph/query-workspace/internal/workspace"
 )
+
+func TestCatalogueFailuresAreTracedWithoutQueryData(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(traces)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(old)
+		_ = traces.Shutdown(context.Background())
+	})
+	db, err := sql.Open("pgx", "postgres://localhost/unused")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store := &Postgres{db: db}
+	ctx := context.Background()
+	_, _ = store.Save(ctx, workspace.SavedQuery{Cypher: "private-query"})
+	_, _ = store.Get(ctx, "private-id")
+	_, _ = store.List(ctx)
+	_, _ = store.LatestSchema(ctx, "private-target")
+	_ = store.SaveSchema(ctx, schema.Snapshot{Text: "private-schema"})
+	spans := recorder.Ended()
+	want := []string{"postgres.save_query", "postgres.get_query", "postgres.list_queries", "postgres.load_schema", "postgres.save_schema"}
+	if len(spans) != len(want) {
+		t.Fatalf("got %d spans, want %d", len(spans), len(want))
+	}
+	for i, span := range spans {
+		if span.Name() != want[i] || span.Status().Code != codes.Error {
+			t.Fatalf("operation %d was not traced as failed: %s %v", i, span.Name(), span.Status())
+		}
+		for _, attr := range span.Attributes() {
+			if strings.Contains(attr.Value.AsString(), "private") {
+				t.Fatalf("query data leaked into attribute %s", attr.Key)
+			}
+		}
+	}
+}
 
 func TestPostgresCatalogIntegration(t *testing.T) {
 	databaseURL := os.Getenv("QUERY_WORKSPACE_TEST_DATABASE_URL")

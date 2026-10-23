@@ -25,6 +25,8 @@ secret must provide:
 
 Application access is controlled by the Nais manifest and login sidecar.
 `GOOGLE_CLOUD_LOCATION` and `VERTEX_MODEL` are set in the Nais manifest.
+The `eu` location uses `aiplatform.eu.rep.googleapis.com`, which must be
+allowed in `accessPolicy.outbound.external`.
 Local development also needs the same values plus a working Application
 Default Credentials identity.
 
@@ -79,6 +81,30 @@ Snapshots contain metadata rather than node property values. Relationship
 patterns from `db.schema.visualization()` are explicitly marked as inferred:
 they may not occur in actual data and do not establish business meaning or
 prove an attack path.
+
+## Tracing
+
+Nais SDK-only instrumentation supplies the OpenTelemetry collector endpoint,
+service identity, resource attributes, and sampling configuration. The application
+exports traces over OTLP/gRPC and flushes pending spans during shutdown.
+Without an OTLP endpoint, export is disabled for local development.
+
+Request traces include Vertex AI generation and HTTP calls, Neo4j execution,
+PostgreSQL catalogue and schema operations, and background schema refreshes.
+Health checks and metrics requests are not traced. Spans contain operation
+metadata and error classifications, not investigation questions, Cypher,
+parameters, results, or raw application error messages. Context-aware JSON logs
+include `trace_id` and `span_id` for correlation.
+
+Open [Nais APM](https://grafana.nav.cloud.nais.io/a/nais-apm-app) and select
+`tpt-query-workspace`, or use the Tempo data source in Grafana Explore:
+
+```traceql
+{ resource.service.name = "tpt-query-workspace" }
+```
+
+An investigation can return an HTTP 200 page containing an error; its request
+span is still marked as failed.
 
 ## Optional integration checks
 

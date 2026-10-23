@@ -9,6 +9,10 @@ import (
 	"time"
 
 	neodriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"tpt-graph/query-workspace/internal/queryparams"
 )
 
@@ -85,6 +89,14 @@ func (r *testResult) Record() *neodriver.Record {
 func (r *testResult) Err() error { return nil }
 
 func TestExecuteRetainsTruncatedResultsWhenRollbackFails(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(traces)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(old)
+		_ = traces.Shutdown(context.Background())
+	})
 	rollbackErr := errors.New("connection lost during rollback")
 	executor := &Neo4jExecutor{
 		driver: testDriver{session: testSession{tx: testTransaction{
@@ -94,6 +106,10 @@ func TestExecuteRetainsTruncatedResultsWhenRollbackFails(t *testing.T) {
 	}
 
 	result, err := executor.Execute(context.Background(), "RETURN 1", nil)
+	spans := recorder.Ended()
+	if len(spans) != 1 || spans[0].Name() != "neo4j.execute" || spans[0].Status().Code != codes.Error {
+		t.Fatalf("expected a failed Neo4j operation span, got %v", spans)
+	}
 
 	if !errors.Is(err, rollbackErr) {
 		t.Fatalf("want rollback error, got %v", err)

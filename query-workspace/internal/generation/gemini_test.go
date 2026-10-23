@@ -11,6 +11,12 @@ import (
 	"strings"
 	"testing"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"google.golang.org/genai"
 	"tpt-graph/query-workspace/internal/schema"
 )
@@ -55,8 +61,21 @@ func (p *testSchemaProvider) Current(context.Context) (schema.Snapshot, error) {
 }
 
 func TestGenerateUsesLatestCachedSchemaInEachVertexRequest(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	old, oldPropagator := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+	otel.SetTracerProvider(traces)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		otel.SetTracerProvider(old)
+		otel.SetTextMapPropagator(oldPropagator)
+		_ = traces.Shutdown(context.Background())
+	})
 	prompts := make(chan string, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Traceparent") == "" {
+			t.Error("outbound Vertex request is missing trace context")
+		}
 		var body struct {
 			SystemInstruction struct {
 				Parts []struct{ Text string }
@@ -77,9 +96,11 @@ func TestGenerateUsesLatestCachedSchemaInEachVertexRequest(t *testing.T) {
 		_, _ = w.Write([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"{\"cypher\":\"RETURN 1\",\"parameters\":{}}"}]}}]}`))
 	}))
 	defer server.Close()
+	httpClient := server.Client()
+	httpClient.Transport = otelhttp.NewTransport(httpClient.Transport)
 	client, err := genai.NewClient(context.Background(), &genai.ClientConfig{
 		Backend: genai.BackendVertexAI, Project: "test-project", Location: "eu",
-		HTTPClient: server.Client(), HTTPOptions: genai.HTTPOptions{BaseURL: server.URL},
+		HTTPClient: httpClient, HTTPOptions: genai.HTTPOptions{BaseURL: server.URL},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -102,5 +123,14 @@ func TestGenerateUsesLatestCachedSchemaInEachVertexRequest(t *testing.T) {
 	}
 	if len(prompts) != 0 {
 		t.Fatal("Vertex was called without cached schema")
+	}
+	spans := recorder.Ended()
+	if len(spans) != 5 || spans[1].Name() != "vertex.generate" || spans[4].Status().Code != codes.Error {
+		t.Fatalf("expected generation, outbound HTTP and failure spans, got %v", spans)
+	}
+	for _, i := range []int{0, 2} {
+		if spans[i].Parent().SpanID() != spans[i+1].SpanContext().SpanID() {
+			t.Fatal("outbound HTTP span is not a child of generation")
+		}
 	}
 }

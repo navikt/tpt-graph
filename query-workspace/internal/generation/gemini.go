@@ -7,11 +7,16 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/genai"
+	"tpt-graph/query-workspace/internal/observability"
 	"tpt-graph/query-workspace/internal/queryparams"
 	"tpt-graph/query-workspace/internal/schema"
 	"tpt-graph/query-workspace/internal/workspace"
@@ -44,7 +49,13 @@ func NewVertexGenerator(project, location, model string, schemas SchemaProvider,
 	}
 }
 
-func (g *VertexGenerator) Generate(ctx context.Context, question string) (workspace.GeneratedQuery, error) {
+func (g *VertexGenerator) Generate(ctx context.Context, question string) (generated workspace.GeneratedQuery, generateErr error) {
+	ctx, end := observability.StartSpan(ctx, "vertex.generate", trace.SpanKindClient,
+		attribute.String("gen_ai.provider.name", "gcp.vertex_ai"),
+		attribute.String("gen_ai.operation.name", "generate_content"),
+		attribute.String("gen_ai.request.model", g.model),
+		attribute.String("cloud.region", g.location))
+	defer func() { end(generateErr) }()
 	if g.project == "" || g.location == "" || g.model == "" {
 		return workspace.GeneratedQuery{}, errors.New("Vertex AI project, location, and model must be configured")
 	}
@@ -62,7 +73,7 @@ func (g *VertexGenerator) Generate(ctx context.Context, question string) (worksp
 		return workspace.GeneratedQuery{}, err
 	}
 
-	g.logger.Info("generating query with cached schema",
+	g.logger.InfoContext(ctx, "generating query with cached schema",
 		"schema_sha256", snapshot.Hash, "schema_captured_at", snapshot.CapturedAt,
 		"prompt_version", PromptVersion, "model", g.model)
 	response, err := client.Models.GenerateContent(ctx, g.model, []*genai.Content{
@@ -89,11 +100,18 @@ func (g *VertexGenerator) getClient(ctx context.Context) (*genai.Client, error) 
 	if g.client != nil {
 		return g.client, nil
 	}
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+	config := &genai.ClientConfig{
 		Backend:  genai.BackendVertexAI,
 		Project:  g.project,
 		Location: g.location,
-	})
+		HTTPClient: &http.Client{
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+		},
+	}
+	if err := config.UseDefaultCredentials(); err != nil {
+		return nil, fmt.Errorf("configuring Vertex AI credentials: %w", err)
+	}
+	client, err := genai.NewClient(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("creating Vertex AI client: %w", err)
 	}

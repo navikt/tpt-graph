@@ -8,6 +8,9 @@ import (
 	"time"
 
 	neodriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	"tpt-graph/query-workspace/internal/observability"
 	"tpt-graph/query-workspace/internal/workspace"
 )
 
@@ -54,6 +57,9 @@ func (e *Neo4jExecutor) VerifyConnectivity(ctx context.Context) error {
 }
 
 func (e *Neo4jExecutor) Execute(ctx context.Context, query string, parameters map[string]any) (output workspace.QueryResult, executeErr error) {
+	ctx, end := observability.StartSpan(ctx, "neo4j.execute", trace.SpanKindClient,
+		attribute.String("db.system.name", "neo4j"))
+	defer func() { end(executeErr) }()
 	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 

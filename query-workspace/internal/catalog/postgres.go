@@ -13,6 +13,9 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	"tpt-graph/query-workspace/internal/observability"
 	"tpt-graph/query-workspace/internal/queryparams"
 	"tpt-graph/query-workspace/internal/workspace"
 )
@@ -57,7 +60,10 @@ func (p *Postgres) Ping(ctx context.Context) error {
 	return p.db.PingContext(ctx)
 }
 
-func (p *Postgres) Save(ctx context.Context, query workspace.SavedQuery) (workspace.SavedQuery, error) {
+func (p *Postgres) Save(ctx context.Context, query workspace.SavedQuery) (saved workspace.SavedQuery, saveErr error) {
+	ctx, end := observability.StartSpan(ctx, "postgres.save_query", trace.SpanKindClient,
+		attribute.String("db.system.name", "postgresql"), attribute.String("db.operation.name", "INSERT"))
+	defer func() { end(saveErr) }()
 	id, err := newID()
 	if err != nil {
 		return workspace.SavedQuery{}, fmt.Errorf("creating saved query ID: %w", err)
@@ -79,7 +85,10 @@ func (p *Postgres) Save(ctx context.Context, query workspace.SavedQuery) (worksp
 	return query, nil
 }
 
-func (p *Postgres) Get(ctx context.Context, id string) (workspace.SavedQuery, error) {
+func (p *Postgres) Get(ctx context.Context, id string) (saved workspace.SavedQuery, getErr error) {
+	ctx, end := observability.StartSpan(ctx, "postgres.get_query", trace.SpanKindClient,
+		attribute.String("db.system.name", "postgresql"), attribute.String("db.operation.name", "SELECT"))
+	defer func() { end(getErr) }()
 	query, err := scanQuery(p.db.QueryRowContext(
 		ctx,
 		`SELECT id, name, category, cypher, parameters, created_at
@@ -95,7 +104,10 @@ func (p *Postgres) Get(ctx context.Context, id string) (workspace.SavedQuery, er
 	return query, nil
 }
 
-func (p *Postgres) List(ctx context.Context) ([]workspace.SavedQuery, error) {
+func (p *Postgres) List(ctx context.Context) (saved []workspace.SavedQuery, listErr error) {
+	ctx, end := observability.StartSpan(ctx, "postgres.list_queries", trace.SpanKindClient,
+		attribute.String("db.system.name", "postgresql"), attribute.String("db.operation.name", "SELECT"))
+	defer func() { end(listErr) }()
 	rows, err := p.db.QueryContext(ctx,
 		`SELECT id, name, category, cypher, parameters, created_at
 		 FROM saved_queries ORDER BY created_at DESC, id`,

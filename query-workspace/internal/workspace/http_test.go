@@ -1,8 +1,10 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,8 +12,40 @@ import (
 	"strings"
 	"testing"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"tpt-graph/query-workspace/internal/observability"
 	"tpt-graph/query-workspace/internal/schema"
 )
+
+func TestInvestigationFailureTracesAndCorrelatesLogsDespiteHTTP200(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(traces)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(old)
+		_ = traces.Shutdown(context.Background())
+	})
+	var logs bytes.Buffer
+	logger := slog.New(observability.NewTraceHandler(slog.NewJSONHandler(&logs, nil)))
+	handler := NewHTTPHandler(NewService(
+		testGenerator{err: context.DeadlineExceeded}, &testExecutor{}, &testCatalog{},
+	), logger, nil)
+	request := httptest.NewRequest(http.MethodPost, "/ask", strings.NewReader("question=Find+nodes"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	spans := recorder.Ended()
+	if response.Code != http.StatusOK || len(spans) != 1 || spans[0].Status().Code != codes.Error {
+		t.Fatalf("expected failed investigation trace without changing response: status=%d spans=%v", response.Code, spans)
+	}
+	if !strings.Contains(logs.String(), `"trace_id":"`+spans[0].SpanContext().TraceID().String()+`"`) {
+		t.Fatalf("investigation error log is not correlated: %s", logs.String())
+	}
+}
 
 func TestCatalogueFailureDoesNotHideResultsOrPretendCatalogueIsEmpty(t *testing.T) {
 	for _, path := range []string{"/", "/ask"} {

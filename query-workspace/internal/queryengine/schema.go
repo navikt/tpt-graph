@@ -10,6 +10,9 @@ import (
 	"time"
 
 	neodriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+	"tpt-graph/query-workspace/internal/observability"
 	"tpt-graph/query-workspace/internal/schema"
 )
 
@@ -20,6 +23,9 @@ const (
 )
 
 func (e *Neo4jExecutor) Discover(ctx context.Context) (text string, discoveryErr error) {
+	ctx, end := observability.StartSpan(ctx, "neo4j.discover_schema", trace.SpanKindClient,
+		attribute.String("db.system.name", "neo4j"))
+	defer func() { end(discoveryErr) }()
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	session := e.driver.NewSession(ctx, neodriver.SessionConfig{

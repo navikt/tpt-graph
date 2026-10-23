@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"tpt-graph/query-workspace/internal/observability"
 	"tpt-graph/query-workspace/internal/queryparams"
 	"tpt-graph/query-workspace/internal/schema"
 )
@@ -33,10 +34,10 @@ func NewHTTPHandler(service *Service, logger *slog.Logger, schemas SchemaStatusP
 		template: template.Must(template.New("workspace").Parse(workspacePage)),
 		schemas:  schemas,
 	}
-	return http.NewCrossOriginProtection().Handler(handler.routes())
+	return http.NewCrossOriginProtection().Handler(observability.HTTPHandler(handler.routes()))
 }
 
-func (h *HTTPHandler) routes() http.Handler {
+func (h *HTTPHandler) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", h.home)
 	mux.HandleFunc("POST /ask", h.ask)
@@ -69,12 +70,14 @@ func (h *HTTPHandler) ask(w http.ResponseWriter, r *http.Request) {
 	investigation, askErr := h.service.Ask(r.Context(), question)
 	encoded, marshalErr := json.Marshal(investigation.Query.Parameters)
 	if marshalErr != nil {
-		h.logger.Error("encoding generated parameters", "error", marshalErr)
+		observability.RecordError(r.Context(), marshalErr)
+		h.logger.ErrorContext(r.Context(), "encoding generated parameters", "error", marshalErr)
 		h.render(w, r, http.StatusInternalServerError, pageData{Error: "Could not prepare the generated query for saving."})
 		return
 	}
 	if askErr != nil {
-		h.logger.Error("investigation failed", "error", askErr)
+		observability.RecordError(r.Context(), askErr)
+		h.logger.ErrorContext(r.Context(), "investigation failed", "error", askErr)
 		h.render(w, r, http.StatusOK, pageData{
 			Investigation: &investigation,
 			GeneratedJSON: string(encoded),
@@ -96,6 +99,7 @@ func (h *HTTPHandler) save(w http.ResponseWriter, r *http.Request) {
 	}
 	parameters, err := queryparams.Decode([]byte(r.FormValue("parameters")))
 	if err != nil {
+		observability.RecordError(r.Context(), err)
 		h.render(w, r, http.StatusBadRequest, pageData{Error: err.Error()})
 		return
 	}
@@ -107,6 +111,7 @@ func (h *HTTPHandler) save(w http.ResponseWriter, r *http.Request) {
 		parameters,
 	)
 	if err != nil {
+		observability.RecordError(r.Context(), err)
 		h.render(w, r, http.StatusBadRequest, pageData{Error: err.Error()})
 		return
 	}
@@ -120,9 +125,11 @@ func (h *HTTPHandler) runSaved(w http.ResponseWriter, r *http.Request) {
 			h.render(w, r, http.StatusNotFound, pageData{Error: "Saved query not found."})
 			return
 		}
+		observability.RecordError(r.Context(), err)
+		h.logger.ErrorContext(r.Context(), "saved query execution failed", "error", err)
 		encoded, marshalErr := json.Marshal(query.Parameters)
 		if marshalErr != nil {
-			h.logger.Error("encoding saved query parameters", "error", marshalErr)
+			h.logger.ErrorContext(r.Context(), "encoding saved query parameters", "error", marshalErr)
 			h.render(w, r, http.StatusInternalServerError, pageData{Error: "Could not display saved query parameters."})
 			return
 		}
@@ -139,7 +146,8 @@ func (h *HTTPHandler) runSaved(w http.ResponseWriter, r *http.Request) {
 	}
 	encoded, err := json.Marshal(query.Parameters)
 	if err != nil {
-		h.logger.Error("encoding saved query parameters", "error", err)
+		observability.RecordError(r.Context(), err)
+		h.logger.ErrorContext(r.Context(), "encoding saved query parameters", "error", err)
 		h.render(w, r, http.StatusInternalServerError, pageData{Error: "Could not display saved query parameters."})
 		return
 	}
@@ -156,7 +164,8 @@ func (h *HTTPHandler) runSaved(w http.ResponseWriter, r *http.Request) {
 func (h *HTTPHandler) render(w http.ResponseWriter, r *http.Request, status int, data pageData) {
 	queries, err := h.service.List(r.Context())
 	if err != nil {
-		h.logger.Error("listing saved queries", "error", err)
+		observability.RecordError(r.Context(), err)
+		h.logger.ErrorContext(r.Context(), "listing saved queries", "error", err)
 		data.CatalogError = "Could not load saved queries."
 		if status == http.StatusOK {
 			status = http.StatusInternalServerError
@@ -167,7 +176,8 @@ func (h *HTTPHandler) render(w http.ResponseWriter, r *http.Request, status int,
 	if h.schemas != nil {
 		schemaStatus, err := h.schemas.Status(r.Context())
 		if err != nil {
-			h.logger.Error("loading schema status", "error", err)
+			observability.RecordError(r.Context(), err)
+			h.logger.ErrorContext(r.Context(), "loading schema status", "error", err)
 			data.SchemaError = "Could not load schema status."
 		}
 		data.Schema = &schemaStatus
@@ -175,7 +185,8 @@ func (h *HTTPHandler) render(w http.ResponseWriter, r *http.Request, status int,
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	if err := h.template.Execute(w, data); err != nil {
-		h.logger.Error("rendering workspace page", "error", err)
+		observability.RecordError(r.Context(), err)
+		h.logger.ErrorContext(r.Context(), "rendering workspace page", "error", err)
 	}
 }
 

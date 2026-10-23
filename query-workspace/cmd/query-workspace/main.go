@@ -25,7 +25,7 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(observability.NewTraceHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.SetDefault(logger)
 
 	cfg, err := config.Load()
@@ -73,6 +73,11 @@ func main() {
 	latencies, err := observability.NewQueryLatencies(registry)
 	if err != nil {
 		logger.Error("failed to register query metrics", "error", err)
+		os.Exit(1)
+	}
+	shutdownTracing, err := observability.SetupTracing(startupCtx, logger)
+	if err != nil {
+		logger.Error("failed to initialize tracing", "error", err)
 		os.Exit(1)
 	}
 	targetHash := sha256.Sum256([]byte(cfg.Neo4jURI + "\x00" + cfg.Neo4jDatabase))
@@ -160,6 +165,11 @@ func main() {
 	}
 	if err := store.Close(); err != nil {
 		logger.Error("PostgreSQL shutdown failed", "error", err)
+	}
+	traceCtx, traceCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer traceCancel()
+	if err := shutdownTracing(traceCtx); err != nil {
+		logger.Error("tracing shutdown failed", "error", err)
 	}
 	if serverErr != nil {
 		os.Exit(1)

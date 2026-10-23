@@ -27,6 +27,10 @@ spec:
   prometheus:
     enabled: true
     path: /metrics
+  observability:
+    autoInstrumentation:
+      enabled: true
+      runtime: sdk
   env:
     - name: GOOGLE_CLOUD_LOCATION
       value: eu
@@ -56,6 +60,8 @@ spec:
       autoLogin: true
   accessPolicy:
     outbound:
+      external:
+        - host: aiplatform.eu.rep.googleapis.com
       rules:
         - application: neo4j
   ingresses:

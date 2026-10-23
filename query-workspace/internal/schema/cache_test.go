@@ -10,6 +10,11 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 type testSource struct {
@@ -95,6 +100,14 @@ func TestRefreshPersistsSchemaAndRequestsOnlyReadCache(t *testing.T) {
 }
 
 func TestRefreshKeepsPreviousSnapshotOnFailure(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(traces)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(old)
+		_ = traces.Shutdown(context.Background())
+	})
 	for _, failure := range []string{"discovery", "empty", "oversized", "persistence"} {
 		t.Run(failure, func(t *testing.T) {
 			source := &testSource{text: "Dependency {name: String}"}
@@ -127,6 +140,15 @@ func TestRefreshKeepsPreviousSnapshotOnFailure(t *testing.T) {
 				t.Fatalf("previous snapshot lost: %#v, %v", current, err)
 			}
 		})
+	}
+	spans := recorder.Ended()
+	if len(spans) != 8 {
+		t.Fatalf("expected eight refresh spans, got %d", len(spans))
+	}
+	for i, span := range spans {
+		if span.Name() != "schema.refresh" || (span.Status().Code == codes.Error) != (i%2 == 1) {
+			t.Fatalf("refresh %d has incorrect status: %s %v", i, span.Name(), span.Status())
+		}
 	}
 }
 
