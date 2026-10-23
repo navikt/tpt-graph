@@ -3,8 +3,19 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - '**.md'
+    paths:
+      - 'cmd/tpt-graph/**'
+      - 'internal/config/**'
+      - 'internal/graphapi/**'
+      - 'internal/handler/**'
+      - 'internal/neo4j/**'
+      - 'internal/telemetry/**'
+      - 'internal/whodis/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Dockerfile'
+      - '.nais/nais.yaml'
+      - '.github/workflows/main.yaml'
 jobs:
   build:
     permissions:
@@ -13,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: prod-gcp:appsec
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - uses: nais/docker-build-push@dd7421d5068057a020ca46ead966c26190c516b1 # v0

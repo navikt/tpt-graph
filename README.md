@@ -19,8 +19,36 @@ make run          # go run ./cmd/tpt-graph
 make run-local    # run with local Neo4j defaults (NEO4J_PASSWORD sourced from fnox)
 make docker-build # docker build -t tpt-graph .
 make clean        # rm -rf bin/
-go test ./...     # run all tests
+go test ./...     # run tpt-graph module tests
 ```
+
+## Private query workspace
+
+The independent `query-workspace` Go module contains the private, single-owner
+Neo4j investigation UI. Build and test it separately:
+
+```bash
+make query-workspace-build
+make query-workspace-test
+make query-workspace-docker-build
+```
+
+It uses Nais-injected `DB_URL` for its PostgreSQL catalogue and requires
+`NEO4J_URI`, `NEO4J_USER`, and `NEO4J_PASSWORD`. Application access is
+controlled by the Nais manifest and login sidecar. The experimental deployment can reuse
+tpt-graph's Neo4j credentials. Nais outbound access and driver read routing
+are not a database-enforced read-only guarantee.
+Vertex AI generation uses workload credentials (ADC) and requires
+`GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and `VERTEX_MODEL`. Schema
+metadata is refreshed daily at midnight Europe/Oslo and cached in PostgreSQL.
+Startup captures missing or overdue metadata; generation uses the latest
+successful snapshot and the UI shows its age. Saved queries can still be
+listed and rerun if Vertex AI generation or schema discovery is unavailable.
+
+The companion's Nais manifest and deployment workflow are
+`.nais/query-workspace.yaml` and `.github/workflows/query-workspace.yaml`.
+The Cloud SQL instance uses a small shared-CPU tier for the initial private
+deployment; that tier is not covered by the Cloud SQL SLA.
 
 ## Environment variables
 
