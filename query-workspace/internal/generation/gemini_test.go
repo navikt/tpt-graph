@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -21,6 +22,20 @@ func TestDecodeGeneratedQuery(t *testing.T) {
 	}
 	if query.Cypher != "MATCH (n) RETURN n.name AS name" || query.Parameters["name"] != "example" {
 		t.Fatalf("decoded query = %#v", query)
+	}
+}
+
+func TestDecodeGeneratedQueryPreservesNumericParameters(t *testing.T) {
+	query, err := decodeGeneratedQuery(`{"cypher":"RETURN $id LIMIT $limit","parameters":{"limit":10,"id":9007199254740993,"nested":[{"min":-9223372036854775808,"score":0.25}]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"limit": int64(10), "id": int64(9007199254740993),
+		"nested": []any{map[string]any{"min": int64(-9223372036854775808), "score": float64(0.25)}},
+	}
+	if !reflect.DeepEqual(query.Parameters, want) {
+		t.Fatalf("parameters = %#v, want %#v", query.Parameters, want)
 	}
 }
 

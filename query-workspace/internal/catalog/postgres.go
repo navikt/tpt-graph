@@ -13,6 +13,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"tpt-graph/query-workspace/internal/queryparams"
 	"tpt-graph/query-workspace/internal/workspace"
 )
 
@@ -128,7 +129,8 @@ func scanQuery(row rowScanner) (workspace.SavedQuery, error) {
 	if err := row.Scan(&query.ID, &query.Name, &query.Category, &query.Cypher, &parameters, &query.CreatedAt); err != nil {
 		return workspace.SavedQuery{}, err
 	}
-	if err := json.Unmarshal(parameters, &query.Parameters); err != nil {
+	var err error
+	if query.Parameters, err = queryparams.Decode(parameters); err != nil {
 		return workspace.SavedQuery{}, fmt.Errorf("decoding saved query parameters: %w", err)
 	}
 	return query, nil

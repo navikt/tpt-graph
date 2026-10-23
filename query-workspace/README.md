@@ -35,6 +35,10 @@ bound request time and collected output; only Neo4j-side least-privilege
 credentials provide the database write boundary, and output limits do not
 guarantee bounded server-side computation.
 
+Queries use parameterized read-only Cypher without procedure calls or block
+comments. JSON integer parameters retain signed 64-bit precision when generated,
+saved, and rerun; out-of-range integers are rejected.
+
 The experimental deployment can reuse tpt-graph's Neo4j credentials. If that
 identity can write, query checks and read routing do not provide a
 database-enforced read-only guarantee.

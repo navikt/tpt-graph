@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -24,10 +25,13 @@ func TestPostgresCatalogIntegration(t *testing.T) {
 	defer store.Close()
 
 	saved, err := store.Save(ctx, workspace.SavedQuery{
-		Name:       "integration test",
-		Category:   "Draft",
-		Cypher:     "RETURN $name AS name",
-		Parameters: map[string]any{"name": "workspace-test"},
+		Name:     "integration test",
+		Category: "Draft",
+		Cypher:   "RETURN $name AS name",
+		Parameters: map[string]any{
+			"name": "workspace-test", "limit": int64(10), "id": int64(9007199254740993),
+			"nested": []any{map[string]any{"count": int64(9223372036854775807), "score": float64(0.25)}},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -40,7 +44,7 @@ func TestPostgresCatalogIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Cypher != saved.Cypher || loaded.Parameters["name"] != "workspace-test" {
+	if loaded.Cypher != saved.Cypher || !reflect.DeepEqual(loaded.Parameters, saved.Parameters) {
 		t.Fatalf("loaded query = %#v", loaded)
 	}
 	queries, err := store.List(ctx)
@@ -51,6 +55,9 @@ func TestPostgresCatalogIntegration(t *testing.T) {
 	for _, query := range queries {
 		if query.ID == saved.ID {
 			found = true
+			if !reflect.DeepEqual(query.Parameters, saved.Parameters) {
+				t.Fatalf("listed parameters = %#v, want %#v", query.Parameters, saved.Parameters)
+			}
 			break
 		}
 	}

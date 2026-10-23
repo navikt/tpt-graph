@@ -6,11 +6,42 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 
 	"tpt-graph/query-workspace/internal/schema"
 )
+
+func TestCatalogueFailureDoesNotHideResultsOrPretendCatalogueIsEmpty(t *testing.T) {
+	for _, path := range []string{"/", "/ask"} {
+		t.Run(path, func(t *testing.T) {
+			handler := NewHTTPHandler(NewService(
+				testGenerator{query: GeneratedQuery{Cypher: "RETURN 1"}},
+				&testExecutor{result: QueryResult{Columns: []string{"value"}, Rows: [][]string{{"available-result"}}}},
+				&testCatalog{listErr: errors.New("database unavailable")},
+			), nil, nil)
+			method := http.MethodGet
+			if path == "/ask" {
+				method = http.MethodPost
+			}
+			request := httptest.NewRequest(method, path, strings.NewReader("question=Find+nodes"))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			body := response.Body.String()
+			if response.Code != http.StatusInternalServerError || !strings.Contains(body, "Could not load saved queries.") {
+				t.Fatalf("catalogue failure was not reported: %d %s", response.Code, body)
+			}
+			if strings.Contains(body, "No saved queries yet.") {
+				t.Fatal("failed catalogue load was presented as an empty catalogue")
+			}
+			if path == "/ask" && (!strings.Contains(body, "available-result") || strings.Contains(body, "query execution failed")) {
+				t.Fatal("catalogue failure hid or misrepresented successful query results")
+			}
+		})
+	}
+}
 
 type testGenerator struct {
 	query GeneratedQuery
@@ -40,6 +71,7 @@ func (e *testExecutor) Execute(ctx context.Context, query string, parameters map
 type testCatalog struct {
 	queries []SavedQuery
 	query   SavedQuery
+	listErr error
 }
 
 func (c *testCatalog) Save(_ context.Context, query SavedQuery) (SavedQuery, error) {
@@ -117,7 +149,7 @@ func TestSaveDefaultsCategoryToDraft(t *testing.T) {
 }
 
 func (c *testCatalog) List(context.Context) ([]SavedQuery, error) {
-	return c.queries, nil
+	return c.queries, c.listErr
 }
 
 func TestAskDisplaysGeneratedQueryAndResults(t *testing.T) {
@@ -344,6 +376,70 @@ func TestWorkspaceAccessAndCrossOriginProtection(t *testing.T) {
 			if test.status == http.StatusForbidden && len(catalog.queries) != 0 {
 				t.Fatal("cross-origin request saved a query")
 			}
+		})
+	}
+}
+
+func TestSaveAndRerunPreserveNumericParameters(t *testing.T) {
+	catalog := &testCatalog{}
+	executor := &testExecutor{}
+	handler := NewHTTPHandler(NewService(testGenerator{}, executor, catalog), nil, nil)
+	form := url.Values{
+		"name": {"Numeric query"}, "cypher": {"RETURN $id LIMIT $limit"},
+		"parameters": {`{"id":9007199254740993,"limit":10,"nested":[{"count":9223372036854775807,"score":0.25}]}`},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/save", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusSeeOther || len(catalog.queries) != 1 {
+		t.Fatalf("save failed: %d %s", response.Code, response.Body.String())
+	}
+	catalog.query = catalog.queries[0]
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/queries/query-1/run", nil))
+	want := map[string]any{
+		"id": int64(9007199254740993), "limit": int64(10),
+		"nested": []any{map[string]any{"count": int64(9223372036854775807), "score": float64(0.25)}},
+	}
+	if response.Code != http.StatusOK || !reflect.DeepEqual(executor.parameters, want) {
+		t.Fatalf("rerun status = %d, parameters = %#v, want %#v", response.Code, executor.parameters, want)
+	}
+}
+
+func TestResultPagesShowCompleteCatalogue(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		path string
+		err  error
+	}{
+		{"ask", "/ask", nil},
+		{"ask execution failure", "/ask", errors.New("query timed out")},
+		{"rerun", "/queries/first/run", nil},
+		{"rerun execution failure", "/queries/first/run", errors.New("query timed out")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			queries := []SavedQuery{
+				{ID: "first", Name: "First saved query", Cypher: "RETURN 1"},
+				{ID: "second", Name: "Second saved query", Cypher: "RETURN 2"},
+			}
+			handler := NewHTTPHandler(NewService(
+				testGenerator{query: GeneratedQuery{Cypher: "RETURN 1"}},
+				&testExecutor{err: test.err}, &testCatalog{queries: queries, query: queries[0]},
+			), nil, nil)
+			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader("question=Find+nodes"))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", response.Code, response.Body.String())
+			}
+			for _, query := range queries {
+				if !strings.Contains(response.Body.String(), query.Name) {
+					t.Errorf("missing %q from result page: %s", query.Name, response.Body.String())
+				}
+			}
+
 		})
 	}
 }

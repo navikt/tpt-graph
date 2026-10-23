@@ -237,6 +237,8 @@ func cypherTokens(query string) ([]string, error) {
 		switch {
 		case isSpace(query[i]):
 			i++
+		case query[i] == '/' && i+1 < len(query) && query[i+1] == '*':
+			return nil, errors.New("block comments are not permitted")
 		case query[i] == '/' && i+1 < len(query) && query[i+1] == '/':
 			i += 2
 			for i < len(query) && query[i] != '\n' {
@@ -285,6 +287,11 @@ func cypherTokens(query string) ([]string, error) {
 			}
 		case query[i] == ';':
 			return nil, errors.New("multiple Cypher statements are not permitted")
+		case query[i] == '$':
+			i++
+			for i < len(query) && isWordPart(query[i]) {
+				i++
+			}
 		case isWordStart(query[i]):
 			start := i
 			for i < len(query) && isWordPart(query[i]) {

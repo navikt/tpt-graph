@@ -5,11 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"html/template"
-	"io"
 	"log/slog"
 	"net/http"
-	"strings"
 
+	"tpt-graph/query-workspace/internal/queryparams"
 	"tpt-graph/query-workspace/internal/schema"
 )
 
@@ -53,16 +52,11 @@ type pageData struct {
 	GeneratedJSON string
 	Schema        *schema.Status
 	SchemaError   string
+	CatalogError  string
 }
 
 func (h *HTTPHandler) home(w http.ResponseWriter, r *http.Request) {
-	queries, err := h.service.List(r.Context())
-	if err != nil {
-		h.logger.Error("listing saved queries", "error", err)
-		h.render(w, r, http.StatusInternalServerError, pageData{Error: "Could not load saved queries."})
-		return
-	}
-	h.render(w, r, http.StatusOK, pageData{Queries: queries})
+	h.render(w, r, http.StatusOK, pageData{})
 }
 
 func (h *HTTPHandler) ask(w http.ResponseWriter, r *http.Request) {
@@ -100,20 +94,9 @@ func (h *HTTPHandler) save(w http.ResponseWriter, r *http.Request) {
 		h.render(w, r, http.StatusBadRequest, pageData{Error: "The saved query form is invalid or too large."})
 		return
 	}
-	var parameters map[string]any
-	decoder := json.NewDecoder(strings.NewReader(r.FormValue("parameters")))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&parameters); err != nil {
-		h.render(w, r, http.StatusBadRequest, pageData{Error: "Query parameters must be a JSON object."})
-		return
-	}
-	if parameters == nil {
-		h.render(w, r, http.StatusBadRequest, pageData{Error: "Query parameters must be a JSON object."})
-		return
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		h.render(w, r, http.StatusBadRequest, pageData{Error: "Query parameters must contain one JSON object."})
+	parameters, err := queryparams.Decode([]byte(r.FormValue("parameters")))
+	if err != nil {
+		h.render(w, r, http.StatusBadRequest, pageData{Error: err.Error()})
 		return
 	}
 	query, err := h.service.Save(
@@ -144,7 +127,6 @@ func (h *HTTPHandler) runSaved(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.render(w, r, http.StatusOK, pageData{
-			Queries: []SavedQuery{query},
 			Investigation: &Investigation{
 				Question: query.Name,
 				Query:    GeneratedQuery{Cypher: query.Cypher, Parameters: query.Parameters},
@@ -162,7 +144,6 @@ func (h *HTTPHandler) runSaved(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.render(w, r, http.StatusOK, pageData{
-		Queries: []SavedQuery{query},
 		Investigation: &Investigation{
 			Question: query.Name,
 			Query:    GeneratedQuery{Cypher: query.Cypher, Parameters: query.Parameters},
@@ -173,6 +154,16 @@ func (h *HTTPHandler) runSaved(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) render(w http.ResponseWriter, r *http.Request, status int, data pageData) {
+	queries, err := h.service.List(r.Context())
+	if err != nil {
+		h.logger.Error("listing saved queries", "error", err)
+		data.CatalogError = "Could not load saved queries."
+		if status == http.StatusOK {
+			status = http.StatusInternalServerError
+		}
+	} else {
+		data.Queries = queries
+	}
 	if h.schemas != nil {
 		schemaStatus, err := h.schemas.Status(r.Context())
 		if err != nil {
@@ -251,7 +242,9 @@ const workspacePage = `<!doctype html>
     {{end}}
     <section aria-labelledby="saved-title">
       <h2 id="saved-title">Saved queries</h2>
-      {{if .Queries}}
+      {{if .CatalogError}}
+        <p role="alert">{{.CatalogError}}</p>
+      {{else if .Queries}}
         <ul>
           {{range .Queries}}
             <li>

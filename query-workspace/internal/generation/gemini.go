@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"google.golang.org/genai"
+	"tpt-graph/query-workspace/internal/queryparams"
 	"tpt-graph/query-workspace/internal/schema"
 	"tpt-graph/query-workspace/internal/workspace"
 )
@@ -101,7 +102,10 @@ func (g *VertexGenerator) getClient(ctx context.Context) (*genai.Client, error) 
 }
 
 func decodeGeneratedQuery(text string) (workspace.GeneratedQuery, error) {
-	var query workspace.GeneratedQuery
+	var query struct {
+		Cypher     string          `json:"cypher"`
+		Parameters json.RawMessage `json:"parameters"`
+	}
 	decoder := json.NewDecoder(strings.NewReader(text))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&query); err != nil {
@@ -114,10 +118,14 @@ func decodeGeneratedQuery(text string) (workspace.GeneratedQuery, error) {
 	if strings.TrimSpace(query.Cypher) == "" {
 		return workspace.GeneratedQuery{}, errors.New("query response has no Cypher")
 	}
-	if query.Parameters == nil {
-		query.Parameters = map[string]any{}
+	if len(query.Parameters) == 0 || string(query.Parameters) == "null" {
+		query.Parameters = json.RawMessage("{}")
 	}
-	return query, nil
+	parameters, err := queryparams.Decode(query.Parameters)
+	if err != nil {
+		return workspace.GeneratedQuery{}, err
+	}
+	return workspace.GeneratedQuery{Cypher: query.Cypher, Parameters: parameters}, nil
 }
 
 const systemPrompt = `You generate one read-only Cypher query for a Neo4j database.

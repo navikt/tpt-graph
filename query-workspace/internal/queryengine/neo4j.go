@@ -106,7 +106,7 @@ func (e *Neo4jExecutor) Execute(ctx context.Context, query string, parameters ma
 		rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer rollbackCancel()
 		if err := tx.Rollback(rollbackCtx); err != nil {
-			return workspace.QueryResult{}, fmt.Errorf("canceling truncated Neo4j query: %w", err)
+			return collector.result(), fmt.Errorf("canceling truncated Neo4j query: %w", err)
 		}
 		finished = true
 		return collector.result(), nil
