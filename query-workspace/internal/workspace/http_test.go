@@ -45,7 +45,7 @@ func TestAskDisplaysGenerationDiagnosticsOnSuccessAndFailure(t *testing.T) {
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
 			body := response.Body.String()
-			for _, value := range []string{"Generation diagnostics", d.TraceID, "test-model", "Generation duration", "http_attempts"} {
+			for _, value := range []string{"Diagnostics", d.TraceID, "test-model", "Generation duration", "http_attempts"} {
 				if !strings.Contains(body, value) {
 					t.Fatalf("missing %q from diagnostic page: %s", value, body)
 				}
@@ -212,8 +212,8 @@ func TestSaveDefaultsCategoryToDraft(t *testing.T) {
 
 	handler.ServeHTTP(response, request)
 
-	if response.Code != http.StatusSeeOther {
-		t.Fatalf("want redirect status %d, got %d: %s", http.StatusSeeOther, response.Code, response.Body.String())
+	if response.Code != http.StatusOK {
+		t.Fatalf("want save confirmation status %d, got %d: %s", http.StatusOK, response.Code, response.Body.String())
 	}
 	if len(catalog.queries) != 1 || catalog.queries[0].Category != "Draft" {
 		t.Fatalf("saved queries = %#v, want one query in Draft", catalog.queries)
@@ -398,7 +398,7 @@ func TestHomeShowsSchemaFreshnessAndDisablesGenerationWithoutCache(t *testing.T)
 		{"stale after failure", schema.Status{Available: true, Stale: true, RefreshFailed: true}, nil,
 			[]string{"Schema refresh failed", "cached schema is stale"}},
 		{"empty", schema.Status{}, nil,
-			[]string{"No cached schema", "disabled", "Saved queries can still run"}},
+			[]string{"No schema metadata available", "disabled", "can still be run"}},
 		{"database unavailable", schema.Status{}, errors.New("database unavailable"),
 			[]string{"Could not load schema status", "disabled", "Saved queries"}},
 	} {
@@ -434,7 +434,7 @@ func TestWorkspaceAccessAndCrossOriginProtection(t *testing.T) {
 		status int
 	}{
 		{"get without application credentials", http.MethodGet, "/", "", http.StatusOK},
-		{"same-origin post", http.MethodPost, "/save", "https://workspace.example", http.StatusSeeOther},
+		{"same-origin post", http.MethodPost, "/save", "https://workspace.example", http.StatusOK},
 		{"cross-origin post", http.MethodPost, "/save", "https://other.example", http.StatusForbidden},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -470,7 +470,7 @@ func TestSaveAndRerunPreserveNumericParameters(t *testing.T) {
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusSeeOther || len(catalog.queries) != 1 {
+	if response.Code != http.StatusOK || len(catalog.queries) != 1 {
 		t.Fatalf("save failed: %d %s", response.Code, response.Body.String())
 	}
 	catalog.query = catalog.queries[0]
@@ -501,6 +501,7 @@ func TestResultPagesShowCompleteCatalogue(t *testing.T) {
 				{ID: "first", Name: "First saved query", Cypher: "RETURN 1"},
 				{ID: "second", Name: "Second saved query", Cypher: "RETURN 2"},
 			}
+
 			handler := NewHTTPHandler(NewService(
 				testGenerator{query: GeneratedQuery{Cypher: "RETURN 1"}},
 				&testExecutor{err: test.err}, &testCatalog{queries: queries, query: queries[0]},
@@ -518,6 +519,101 @@ func TestResultPagesShowCompleteCatalogue(t *testing.T) {
 				}
 			}
 
+		})
+	}
+}
+
+func TestWorkspaceLayoutAndCatalogueSearchWithoutJavaScript(t *testing.T) {
+	catalog := &testCatalog{queries: []SavedQuery{
+		{ID: "php", Name: "PHP repos", Category: "Languages", Question: "Find non-archived repositories"},
+		{ID: "owners", Name: "Repository admins", Category: "Ownership"},
+	}}
+	handler := NewHTTPHandler(NewService(testGenerator{}, &testExecutor{}, catalog), nil, nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/?q=non-ARCHIVED", nil))
+	body := response.Body.String()
+	for _, want := range []string{`href="/static/workspace.css"`, `src="/static/workspace.js"`, `name="q"`, `name="question"`, "PHP repos", "1 · Ask", "2 · Inspect", "3 · Reuse"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q", want)
+		}
+
+	}
+	if !strings.Contains(body, `data-search="Repository admins Ownership " hidden`) || strings.Contains(body, `data-search="PHP repos Languages Find non-archived repositories" hidden`) {
+		t.Fatal("server-side search did not filter by the original question")
+	}
+	for _, path := range []string{"/static/workspace.css", "/static/workspace.js"} {
+		response = httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusOK || response.Body.Len() == 0 {
+			t.Fatalf("asset %s unavailable: %d", path, response.Code)
+		}
+	}
+}
+
+func TestInvestigationEvidenceStates(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		query       GeneratedQuery
+		result      QueryResult
+		generateErr error
+		executeErr  error
+		saved       bool
+		want        []string
+		unwanted    []string
+	}{
+		{name: "success", result: QueryResult{Columns: []string{"repository"}, Rows: [][]string{{"navikt/erfaringsforum"}}},
+			want: []string{"1 rows returned", "What ran", "navikt/erfaringsforum", `class="row-number">1`, "passed", "Save this query"}},
+		{name: "zero rows", result: QueryResult{Columns: []string{"repository"}},
+			want: []string{"0 rows returned", "This query matched nothing.", "Zero rows is not evidence that no issue exists.", "No rows.", "<th scope=\"col\">repository</th>"}},
+		{name: "truncated", result: QueryResult{Columns: []string{"repository"}, Rows: [][]string{{"navikt/saape-pbin"}}, Truncated: true},
+			want: []string{"Results are truncated and incomplete.", "configured output limit", "counts and absences", "navikt/saape-pbin"}},
+		{name: "generation timeout", generateErr: context.DeadlineExceeded,
+			want:     []string{"Generation failed before producing a query.", "Nothing executed", "not reached", "context deadline exceeded", `class="diagnostics" open`},
+			unwanted: []string{"What ran", "Save this query", "0 rows returned"}},
+		{name: "partial execution", result: QueryResult{Columns: []string{"repository"}, Rows: [][]string{{"navikt/api-management"}}}, executeErr: errors.New("TransactionTimedOut"),
+			want: []string{"1 partial rows", "Execution failed — the rows below are partial.", "TransactionTimedOut", "navikt/api-management", "What ran", `class="diagnostics" open`}},
+		{name: "execution failed without rows", executeErr: errors.New("TransactionTimedOut"),
+			want: []string{"Execution failed before returning any rows.", "TransactionTimedOut"}, unwanted: []string{"This query matched nothing.", "0 rows returned"}},
+		{name: "validation rejected", query: GeneratedQuery{Cypher: "MATCH (n) DELETE n"},
+			want:     []string{"Query validation failed.", "Nothing executed", "Generated query (not executed)", "not reached"},
+			unwanted: []string{"Save this query", "What ran", "0 rows returned"}},
+		{name: "saved rerun", saved: true,
+			want:     []string{"Saved query", "PHP repos", "skipped — saved query", "Stored query, run unchanged", "Which non-archived repositories use PHP?"},
+			unwanted: []string{"Save this query"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			generated := test.query
+			if generated.Cypher == "" && test.generateErr == nil {
+				generated = GeneratedQuery{Cypher: "MATCH (r:GitHubRepository) RETURN r.name AS repository", Parameters: map[string]any{"language": "COBOL"}}
+			}
+			catalog := &testCatalog{query: SavedQuery{ID: "php", Name: "PHP repos", Question: "Which non-archived repositories use PHP?", Cypher: "RETURN $language AS language", Parameters: map[string]any{"language": "PHP"}}}
+			executor := &testExecutor{result: test.result, err: test.executeErr}
+			handler := NewHTTPHandler(NewService(testGenerator{query: generated, err: test.generateErr}, executor, catalog), nil, nil)
+			path := "/ask"
+			if test.saved {
+				path = "/queries/php/run"
+			}
+			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader("question=Which+repositories+use+COBOL%3F"))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			body := response.Body.String()
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", response.Code, body)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(body, want) {
+					t.Errorf("missing %q", want)
+				}
+			}
+			for _, unwanted := range test.unwanted {
+				if strings.Contains(body, unwanted) {
+					t.Errorf("unexpected %q", unwanted)
+				}
+			}
+			if (test.generateErr != nil || test.name == "validation rejected") && executor.query != "" {
+				t.Fatal("query executed after generation or validation failure")
+			}
 		})
 	}
 }

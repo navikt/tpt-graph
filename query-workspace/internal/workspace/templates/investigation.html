@@ -1,0 +1,73 @@
+{{define "run_strip"}}
+<section class="run-strip" aria-label="Run status">
+  <p class="run-meta"><strong>Run</strong> · {{.Source}}{{if .Time}} · {{.Time}}{{end}}</p>
+  <ol class="steps">{{range .Steps}}<li class="step"><span class="{{if eq .Status "done"}}ok{{else if eq .Status "failed"}}err-ink{{else}}muted{{end}}" aria-hidden="true">{{.Glyph}}</span><strong>{{.Label}}</strong><small>{{.Status}} · {{.Detail}}</small></li>{{end}}</ol>
+</section>
+{{end}}
+
+{{define "results"}}
+<section class="results" aria-labelledby="results-title">
+  <div class="section-heading"><h2 id="results-title">Results</h2><span>{{.Summary}}</span></div>
+  {{range .Notices}}
+    <div class="notice {{.Tone}}" role="{{.Role}}"><span aria-hidden="true">{{.Glyph}}</span><div><strong>{{.Title}}</strong> {{.Body}}{{if .Code}}<code>{{.Code}}</code>{{end}}</div></div>
+  {{end}}
+  {{if .Columns}}
+    <div class="table-scroll" tabindex="0" role="region" aria-label="Query results">
+      <table>
+        <thead><tr><th scope="col" class="row-number">#</th>{{range .Columns}}<th scope="col">{{.}}</th>{{end}}</tr></thead>
+        <tbody>{{range .Rows}}<tr><td class="row-number">{{.Number}}</td>{{range .Cells}}<td>{{.}}</td>{{end}}</tr>{{end}}</tbody>
+      </table>
+      {{if not .Rows}}<p class="no-rows">No rows.</p>{{end}}
+    </div>
+  {{end}}
+</section>
+{{end}}
+
+{{define "what_ran"}}
+<section class="what-ran" aria-labelledby="query-title">
+  <div class="section-heading"><h2 id="query-title">{{.QueryTitle}}</h2><span>{{.QueryCaveat}}</span></div>
+  <div class="code-grid">
+    <div class="code-panel">
+      <div class="panel-header"><span>Cypher</span><button type="button" id="copy-cypher" class="js-only" hidden>Copy</button></div>
+      <pre><code id="cypher">{{.Cypher}}</code></pre>
+      <pre id="raw-cypher" hidden>{{.RawCypher}}</pre>
+      <p id="copy-status" class="sr-only" role="status"></p>
+    </div>
+    <div class="code-panel">
+      <div class="panel-header">Parameters</div>
+      {{if .Params}}<dl class="parameters">{{range .Params}}<dt>{{.Key}}</dt><dd>{{.Value}}</dd>{{end}}</dl>{{else}}<p class="parameters">— none</p>{{end}}
+    </div>
+  </div>
+  <p class="query-note">{{if eq .QueryTitle "What ran"}}Query restrictions and read routing were applied.{{else}}This query was not executed.{{end}} They are not a database-enforced read-only guarantee. A matching graph pattern shows that data is connected this way, not that it constitutes an attack path.</p>
+</section>
+{{end}}
+
+{{define "diagnostics"}}
+<details class="diagnostics" {{if .Run.DiagOpen}}open{{end}}>
+  <summary><span><span aria-hidden="true">▸</span> <strong>Diagnostics</strong> — generation, request and network metadata</span><span class="diagnostic-summary">{{.Run.DiagnosticSummary}}</span></summary>
+  <dl class="diagnostic-fields">{{range .Run.Diagnostics}}<dt>{{.Key}}</dt><dd>{{.Value}}</dd>{{end}}</dl>
+  {{if .DiagnosticJSON}}<h3>Request, response and network metadata</h3><pre>{{.DiagnosticJSON}}</pre>{{end}}
+  <p class="muted">“Not reported” and “not reached” are missing measurements, not zero. Time to first response includes upstream processing and network latency. A timeout does not prove the question is too complex.</p>
+</details>
+{{end}}
+
+{{define "save_form"}}
+{{if eq .Save.Status "done"}}
+<p class="ok-ink" role="status"><strong>✓ Saved</strong> "{{.Save.Name}}" in {{.Save.Category}}. It now appears in the catalogue and will run against the current graph each time.</p>
+{{else}}
+<form method="post" action="/save" class="save-form">
+  <div class="section-heading"><h2>Save this query</h2><span>Stores question, Cypher and parameters. Results are not saved.</span></div>
+  <input type="hidden" name="question" value="{{.Question}}">
+  <input type="hidden" name="cypher" value="{{.Investigation.Query.Cypher}}">
+  <input type="hidden" name="parameters" value="{{.GeneratedJSON}}">
+  {{if .RunContext}}<input type="hidden" name="context" value="{{.RunContext}}">{{end}}
+  {{if .Save.Error}}<p id="save-err" class="notice err" role="alert"><strong>✕ Error:</strong> {{.Save.Error}}</p>{{end}}
+  <div class="save-fields">
+    <div><label for="name">Name (required)</label><input id="name" name="name" value="{{.Save.Name}}" required maxlength="200" {{if .Save.NameInvalid}}aria-invalid="true" aria-describedby="save-err"{{end}}></div>
+    <div><label for="category">Category</label><input id="category" name="category" value="{{.Save.Category}}" list="categories" maxlength="100" {{if .Save.CategoryInvalid}}aria-invalid="true" aria-describedby="save-err"{{end}}></div>
+    <datalist id="categories">{{range .Categories}}<option value="{{.}}">{{end}}</datalist>
+    <button type="submit">Save query</button>
+  </div>
+</form>
+{{end}}
+{{end}}

@@ -27,6 +27,7 @@ type SavedQuery struct {
 	ID         string
 	Name       string
 	Category   string
+	Question   string
 	Cypher     string
 	Parameters map[string]any
 	CreatedAt  time.Time
@@ -38,7 +39,18 @@ type Investigation struct {
 	Result             QueryResult
 	GenerationDuration time.Duration
 	ExecutionDuration  time.Duration
+	StartedAt          time.Time
+	Stage              runStage
+	TimedOut           bool
 }
+
+type runStage string
+
+const (
+	stageGenerate runStage = "generate"
+	stageValidate runStage = "validate"
+	stageExecute  runStage = "execute"
+)
 
 type Generator interface {
 	Generate(context.Context, string) (GeneratedQuery, error)
@@ -80,45 +92,53 @@ func NewServiceWithMetrics(generator Generator, executor Executor, catalog Catal
 
 func (s *Service) Ask(ctx context.Context, question string) (Investigation, error) {
 	question = strings.TrimSpace(question)
+	investigation := Investigation{Question: question}
 	if question == "" {
-		return Investigation{}, errors.New("enter an investigation question")
+		return investigation, errors.New("enter an investigation question")
 	}
 	if len(question) > 4000 {
-		return Investigation{}, errors.New("question must be 4000 characters or fewer")
+		return investigation, errors.New("question must be 4000 characters or fewer")
 	}
 
 	started := time.Now()
+	investigation.StartedAt, investigation.Stage = started, stageGenerate
 	generated, err := s.generator.Generate(ctx, question)
 	generationDuration := time.Since(started)
+	investigation.Query = generated
+	investigation.GenerationDuration = generationDuration
 	if s.latencies != nil {
 		s.latencies.ObserveGeneration(generationDuration)
 	}
 	if err != nil {
+		var generationErr *GenerationError
+		investigation.TimedOut = errors.Is(err, context.DeadlineExceeded) ||
+			errors.As(err, &generationErr) && (generationErr.Kind == "upstream_timeout" || generationErr.Kind == "local_timeout")
 		if s.latencies != nil {
 			s.latencies.GenerationFailed()
 		}
-		return Investigation{Question: question, Query: generated, GenerationDuration: generationDuration}, fmt.Errorf("generating query: %w", err)
+		return investigation, fmt.Errorf("generating query: %w", err)
 	}
 	if strings.TrimSpace(generated.Cypher) == "" {
 		if s.latencies != nil {
 			s.latencies.GenerationFailed()
 		}
-		return Investigation{Question: question, Query: generated, GenerationDuration: generationDuration}, errors.New("model returned an empty query")
+		return investigation, errors.New("model returned an empty query")
 	}
 	if len(generated.Cypher) > 100_000 {
 		if s.latencies != nil {
 			s.latencies.GenerationFailed()
 		}
-		return Investigation{Question: question, Query: generated, GenerationDuration: generationDuration}, errors.New("generated query exceeds 100000 characters")
+		return investigation, errors.New("generated query exceeds 100000 characters")
 	}
+	investigation.Stage = stageValidate
 	if err := validateReadQuery(generated.Cypher); err != nil {
 		if s.latencies != nil {
 			s.latencies.GenerationFailed()
 		}
-		return Investigation{Question: question, Query: generated, GenerationDuration: generationDuration}, err
+		return investigation, err
 	}
 
-	investigation := Investigation{Question: question, Query: generated, GenerationDuration: generationDuration}
+	investigation.Stage = stageExecute
 	started = time.Now()
 	result, err := s.executor.Execute(ctx, generated.Cypher, generated.Parameters)
 	investigation.ExecutionDuration = time.Since(started)
@@ -135,7 +155,7 @@ func (s *Service) Ask(ctx context.Context, question string) (Investigation, erro
 	return investigation, nil
 }
 
-func (s *Service) Save(ctx context.Context, name, category, cypher string, parameters map[string]any) (SavedQuery, error) {
+func (s *Service) Save(ctx context.Context, name, category, question, cypher string, parameters map[string]any) (SavedQuery, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return SavedQuery{}, errors.New("query name is required")
@@ -149,6 +169,10 @@ func (s *Service) Save(ctx context.Context, name, category, cypher string, param
 	}
 	if len(category) > 100 {
 		return SavedQuery{}, errors.New("query category must be 100 characters or fewer")
+	}
+	question = strings.TrimSpace(question)
+	if len(question) > 4000 {
+		return SavedQuery{}, errors.New("question must be 4000 characters or fewer")
 	}
 	cypher = strings.TrimSpace(cypher)
 	if cypher == "" {
@@ -173,6 +197,7 @@ func (s *Service) Save(ctx context.Context, name, category, cypher string, param
 	return s.catalog.Save(ctx, SavedQuery{
 		Name:       name,
 		Category:   category,
+		Question:   question,
 		Cypher:     cypher,
 		Parameters: parameters,
 	})
@@ -182,26 +207,37 @@ func (s *Service) List(ctx context.Context) ([]SavedQuery, error) {
 	return s.catalog.List(ctx)
 }
 
-func (s *Service) RunSaved(ctx context.Context, id string) (SavedQuery, QueryResult, error) {
+func (s *Service) RunSaved(ctx context.Context, id string) (SavedQuery, Investigation, error) {
 	query, err := s.catalog.Get(ctx, id)
 	if err != nil {
-		return SavedQuery{}, QueryResult{}, err
+		return SavedQuery{}, Investigation{}, err
+	}
+	question := query.Question
+	if question == "" {
+		question = query.Name
+	}
+	investigation := Investigation{
+		Question: question, Query: GeneratedQuery{Cypher: query.Cypher, Parameters: query.Parameters},
+		StartedAt: time.Now(), Stage: stageValidate,
 	}
 	if err := validateReadQuery(query.Cypher); err != nil {
-		return query, QueryResult{}, err
+		return query, investigation, err
 	}
+	investigation.Stage = stageExecute
 	started := time.Now()
 	result, err := s.executor.Execute(ctx, query.Cypher, query.Parameters)
+	investigation.ExecutionDuration = time.Since(started)
+	investigation.Result = result
 	if s.latencies != nil {
-		s.latencies.ObserveExecution(time.Since(started))
+		s.latencies.ObserveExecution(investigation.ExecutionDuration)
 		if err != nil {
 			s.latencies.ExecutionFailed()
 		}
 	}
 	if err != nil {
-		return query, result, fmt.Errorf("executing saved query: %w", err)
+		return query, investigation, fmt.Errorf("executing saved query: %w", err)
 	}
-	return query, result, nil
+	return query, investigation, nil
 }
 
 func validateReadQuery(query string) error {

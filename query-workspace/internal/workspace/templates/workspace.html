@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Query workspace</title>
+  <link rel="stylesheet" href="/static/workspace.css">
+  <script src="/static/workspace.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#investigation">Skip to investigation</a>
+  <header class="header">
+    <div class="brand"><h1>Query workspace</h1><span>Private · Cartography graph (Neo4j)</span></div>
+    {{template "schema_status" .}}
+  </header>
+  <div class="workspace">
+    {{template "catalogue" .}}
+    <main id="investigation" tabindex="-1">
+      <p class="sr-only" id="live-status" aria-live="polite">{{if .Run}}{{.Run.Summary}}{{end}}</p>
+      {{if .SchemaError}}<p class="notice err" role="alert">{{.SchemaError}}</p>{{end}}
+      {{if .Schema}}
+        {{if .Schema.Stale}}<div class="notice warn" role="status"><span aria-hidden="true">▲</span><div><strong>Schema metadata is {{.Schema.Age}} old.</strong> The cached schema is stale. Generation still works, but may use labels or properties that have since changed. Graph data itself may be newer or older than this.</div></div>{{end}}
+        {{if not .Schema.Available}}<div class="notice err" role="alert"><span aria-hidden="true">✕</span><div><strong>No schema metadata available — generation is disabled.</strong> Queries can't be generated without it. Saved queries don't need the schema and can still be run from the catalogue.</div></div>{{end}}
+        {{if .Schema.RefreshFailed}}<p class="notice warn" role="status">▲ Schema refresh failed. The last successful snapshot, if any, has been retained.</p>{{end}}
+      {{end}}
+      {{template "question" .}}
+      <p class="pending" id="running" role="status" hidden>Running… Generating, validating and executing can take a while. Step outcomes will appear when the request completes.</p>
+      {{if and .Error (not .Run)}}<p class="notice err" role="alert">{{.Error}}</p>{{end}}
+      {{if not .Investigation}}
+        <section class="explainer" aria-label="How the workspace works" data-idle-content>
+          <div><strong>1 · Ask</strong><p>Describe what you want to find in the graph. Name the labels you know; the schema covers the rest.</p></div>
+          <div><strong>2 · Inspect</strong><p>Read the generated Cypher and parameters next to the results. Decide yourself whether it answered your question.</p></div>
+          <div><strong>3 · Reuse</strong><p>Save useful queries with a name and category, then rerun them against the current graph.</p></div>
+        </section>
+      {{end}}
+      {{if .Run}}
+        <div class="run-content" data-idle-content>
+        {{template "run_strip" .Run}}
+        {{template "results" .Run}}
+        {{if .Run.Cypher}}{{template "what_ran" .Run}}{{end}}
+        {{template "diagnostics" .}}
+        {{if and .Save.Status (ne .Save.Status "hidden") (or (not .CatalogError) (eq .Save.Status "done"))}}{{template "save_form" .}}{{end}}
+        </div>
+      {{end}}
+      {{if and .CatalogError .Save.Error}}<p class="notice err" role="alert">{{.Save.Error}}</p>{{end}}
+      {{if .DiagnosticsError}}<p class="notice err" role="alert">{{.DiagnosticsError}}</p>{{end}}
+    </main>
+  </div>
+</body>
+</html>

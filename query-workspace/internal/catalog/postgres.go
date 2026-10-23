@@ -74,9 +74,9 @@ func (p *Postgres) Save(ctx context.Context, query workspace.SavedQuery) (saved 
 	}
 	err = p.db.QueryRowContext(
 		ctx,
-		`INSERT INTO saved_queries (id, name, category, cypher, parameters)
-		 VALUES ($1, $2, $3, $4, $5) RETURNING created_at`,
-		id, query.Name, query.Category, query.Cypher, string(parameters),
+		`INSERT INTO saved_queries (id, name, category, question, cypher, parameters)
+		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING created_at`,
+		id, query.Name, query.Category, query.Question, query.Cypher, string(parameters),
 	).Scan(&query.CreatedAt)
 	if err != nil {
 		return workspace.SavedQuery{}, fmt.Errorf("saving query: %w", err)
@@ -91,7 +91,7 @@ func (p *Postgres) Get(ctx context.Context, id string) (saved workspace.SavedQue
 	defer func() { end(getErr) }()
 	query, err := scanQuery(p.db.QueryRowContext(
 		ctx,
-		`SELECT id, name, category, cypher, parameters, created_at
+		`SELECT id, name, category, question, cypher, parameters, created_at
 		 FROM saved_queries WHERE id = $1`,
 		id,
 	))
@@ -109,7 +109,7 @@ func (p *Postgres) List(ctx context.Context) (saved []workspace.SavedQuery, list
 		attribute.String("db.system.name", "postgresql"), attribute.String("db.operation.name", "SELECT"))
 	defer func() { end(listErr) }()
 	rows, err := p.db.QueryContext(ctx,
-		`SELECT id, name, category, cypher, parameters, created_at
+		`SELECT id, name, category, question, cypher, parameters, created_at
 		 FROM saved_queries ORDER BY created_at DESC, id`,
 	)
 	if err != nil {
@@ -138,7 +138,7 @@ type rowScanner interface {
 func scanQuery(row rowScanner) (workspace.SavedQuery, error) {
 	var query workspace.SavedQuery
 	var parameters []byte
-	if err := row.Scan(&query.ID, &query.Name, &query.Category, &query.Cypher, &parameters, &query.CreatedAt); err != nil {
+	if err := row.Scan(&query.ID, &query.Name, &query.Category, &query.Question, &query.Cypher, &parameters, &query.CreatedAt); err != nil {
 		return workspace.SavedQuery{}, err
 	}
 	var err error

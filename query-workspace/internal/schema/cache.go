@@ -124,7 +124,17 @@ func (c *Cache) Status(ctx context.Context) (Status, error) {
 	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, c.location)
 	status.Available = true
 	status.CapturedAt = snapshot.CapturedAt.In(c.location).Format("2006-01-02 15:04:05 MST")
-	status.Age = now.Sub(snapshot.CapturedAt).Truncate(time.Second).String()
+	age := now.Sub(snapshot.CapturedAt)
+	switch {
+	case age >= 24*time.Hour:
+		status.Age = fmt.Sprintf("%dd %dh", int(age.Hours())/24, int(age.Hours())%24)
+	case age >= time.Hour:
+		status.Age = fmt.Sprintf("%dh %dm", int(age.Hours()), int(age.Minutes())%60)
+	case age >= time.Minute:
+		status.Age = fmt.Sprintf("%dm", int(age.Minutes()))
+	default:
+		status.Age = "less than 1m"
+	}
 	status.Stale = snapshot.CapturedAt.Before(midnight)
 	return status, nil
 }

@@ -1,0 +1,68 @@
+{{define "schema_status"}}
+<details class="schema-status">
+  <summary>
+    {{if .Schema}}
+      {{if .Schema.Available}}
+        {{if .Schema.Stale}}<span class="warn-ink" aria-hidden="true">▲</span> Schema metadata <strong>stale</strong>{{else}}<span class="ok" aria-hidden="true">●</span> Schema metadata <strong>current</strong>{{end}}
+        · captured {{.Schema.CapturedAt}} · {{.Schema.Age}} old
+      {{else}}<span class="err-ink" aria-hidden="true">✕</span> Schema metadata <strong>unavailable</strong> · generation disabled{{end}}
+    {{else}}Schema metadata status not reported{{end}}
+    <span aria-hidden="true">▾</span>
+  </summary>
+  <div class="schema-popover">
+    <p>Refresh scheduled daily at 00:00 (midnight Europe/Oslo).</p>
+    <p>This is the age of the schema <em>metadata</em> used to generate queries — labels, properties and relationship types. It says nothing about how fresh the underlying graph data is.</p>
+    <p>Some relationships in the cached schema are inferred. A pattern existing in the schema is not proof the relationship exists in the data.</p>
+  </div>
+</details>
+{{end}}
+
+{{define "catalogue"}}
+<aside aria-labelledby="saved-title" class="sidebar">
+  <div class="section-heading"><h2 id="saved-title">Saved queries</h2><span>{{if .CatalogError}}—{{else}}{{.CatalogueCount}}{{end}}</span></div>
+  {{if .CatalogError}}
+    <div class="notice err catalogue-error" role="alert"><strong>✕ Couldn't load saved queries</strong>
+      <p>{{.CatalogError}} This is not the same as having none.</p>
+      <p>You can still ask a new question. Saving is unavailable until the catalogue loads.</p><a class="button" href="/">Retry</a>
+    </div>
+  {{else if .Queries}}
+    <form method="get" action="/" class="search-form">
+      <label for="catalogue-search">Find a saved query</label>
+      <input id="catalogue-search" type="search" name="q" value="{{.Search}}" placeholder="Name or category">
+      <button type="submit" class="search-submit">Search</button>
+    </form>
+    <div id="catalogue-groups">
+      {{range .Groups}}
+        <section class="catalogue-group" {{if .Hidden}}hidden{{end}}>
+          <h3>{{.Name}}</h3><ul>
+          {{range .Items}}
+            <li class="catalogue-item" data-search="{{.Name}} {{.Category}} {{.Question}}" {{if .Hidden}}hidden{{end}}>
+              <div><strong>{{.Name}}</strong>{{if .Question}}<span title="{{.Question}}">{{.Question}}</span>{{end}}</div>
+              <form method="post" action="/queries/{{.ID}}/run" data-run="saved"><button type="submit" aria-label="Run saved query {{.Name}}">Run</button></form>
+            </li>
+          {{end}}
+          </ul>
+        </section>
+      {{end}}
+    </div>
+    <p id="no-matches" role="status" {{if not .NoSearchMatch}}hidden{{end}}>No saved query matches <span id="search-term">"{{.Search}}"</span>.</p>
+    <p class="catalogue-note">Saved queries store the question, Cypher and parameters — never results. Run executes the stored query against the current graph, without regenerating. Older queries may have no stored question.</p>
+  {{else}}
+    <div class="empty"><strong>No saved queries yet.</strong><p>After a run, name and save the query to repeat the investigation later against the current graph. Results are not saved.</p></div>
+  {{end}}
+</aside>
+{{end}}
+
+{{define "question"}}
+<form method="post" action="/ask" class="question-form" data-run="generated">
+  <label for="question">Investigation question</label>
+  <div class="composer">
+    <textarea id="question" name="question" required maxlength="4000" rows="3" placeholder="e.g. Which non-archived repositories use PHP?">{{.Question}}</textarea>
+    <div class="composer-footer">
+      <span>Generates Cypher, validates it, then executes immediately. There is no review step before execution.</span>
+      <div><kbd class="js-only" hidden>⌘ / Ctrl ↵</kbd><button type="submit" class="primary" {{if .Schema}}{{if not .Schema.Available}}disabled aria-describedby="generation-note"{{end}}{{end}}>Generate and run</button></div>
+    </div>
+  </div>
+  {{if .Schema}}{{if not .Schema.Available}}<span id="generation-note" class="err-ink">Unavailable: schema metadata missing.</span>{{end}}{{end}}
+</form>
+{{end}}

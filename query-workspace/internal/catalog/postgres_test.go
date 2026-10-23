@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -17,6 +18,30 @@ import (
 	"tpt-graph/query-workspace/internal/schema"
 	"tpt-graph/query-workspace/internal/workspace"
 )
+
+type queryRow []any
+
+func (r queryRow) Scan(dest ...any) error {
+	if len(dest) != len(r) {
+		return fmt.Errorf("got %d columns, want %d", len(dest), len(r))
+	}
+	for i, value := range r {
+		reflect.ValueOf(dest[i]).Elem().Set(reflect.ValueOf(value))
+	}
+	return nil
+}
+
+func TestScanSavedQuestionIncludingLegacyRows(t *testing.T) {
+	for _, question := range []string{"Which repositories use PHP?", ""} {
+		query, err := scanQuery(queryRow{"id", "PHP repos", "Languages", question, "RETURN $language", []byte(`{"language":"PHP"}`), time.Now()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if query.Question != question || query.Cypher != "RETURN $language" || query.Parameters["language"] != "PHP" {
+			t.Fatalf("loaded query = %#v", query)
+		}
+	}
+}
 
 func TestCatalogueFailuresAreTracedWithoutQueryData(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
@@ -73,6 +98,7 @@ func TestPostgresCatalogIntegration(t *testing.T) {
 	saved, err := store.Save(ctx, workspace.SavedQuery{
 		Name:     "integration test",
 		Category: "Draft",
+		Question: "Which repositories use PHP?",
 		Cypher:   "RETURN $name AS name",
 		Parameters: map[string]any{
 			"name": "workspace-test", "limit": int64(10), "id": int64(9007199254740993),
@@ -90,7 +116,7 @@ func TestPostgresCatalogIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Cypher != saved.Cypher || !reflect.DeepEqual(loaded.Parameters, saved.Parameters) {
+	if loaded.Cypher != saved.Cypher || loaded.Question != saved.Question || !reflect.DeepEqual(loaded.Parameters, saved.Parameters) {
 		t.Fatalf("loaded query = %#v", loaded)
 	}
 	queries, err := store.List(ctx)
@@ -101,7 +127,7 @@ func TestPostgresCatalogIntegration(t *testing.T) {
 	for _, query := range queries {
 		if query.ID == saved.ID {
 			found = true
-			if !reflect.DeepEqual(query.Parameters, saved.Parameters) {
+			if query.Question != saved.Question || !reflect.DeepEqual(query.Parameters, saved.Parameters) {
 				t.Fatalf("listed parameters = %#v, want %#v", query.Parameters, saved.Parameters)
 			}
 			break
