@@ -47,13 +47,15 @@ func (h *HTTPHandler) routes() *http.ServeMux {
 }
 
 type pageData struct {
-	Queries       []SavedQuery
-	Investigation *Investigation
-	Error         string
-	GeneratedJSON string
-	Schema        *schema.Status
-	SchemaError   string
-	CatalogError  string
+	Queries          []SavedQuery
+	Investigation    *Investigation
+	Error            string
+	GeneratedJSON    string
+	Schema           *schema.Status
+	SchemaError      string
+	CatalogError     string
+	DiagnosticJSON   string
+	DiagnosticsError string
 }
 
 func (h *HTTPHandler) home(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +164,17 @@ func (h *HTTPHandler) runSaved(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) render(w http.ResponseWriter, r *http.Request, status int, data pageData) {
+	if data.Investigation != nil && data.Investigation.Query.Diagnostics != nil {
+		encoded, err := json.MarshalIndent(data.Investigation.Query.Diagnostics, "", "  ")
+		if err != nil {
+			observability.RecordError(r.Context(), err)
+			h.logger.ErrorContext(r.Context(), "encoding generation diagnostics", "error", err)
+			data.DiagnosticsError = "Could not display generation diagnostics."
+			status = http.StatusInternalServerError
+		} else {
+			data.DiagnosticJSON = string(encoded)
+		}
+	}
 	queries, err := h.service.List(r.Context())
 	if err != nil {
 		observability.RecordError(r.Context(), err)
@@ -220,6 +233,19 @@ const workspacePage = `<!doctype html>
       <textarea id="question" name="question" required maxlength="4000">{{if .Investigation}}{{.Investigation.Question}}{{end}}</textarea>
       <button type="submit" {{if .Schema}}{{if not .Schema.Available}}disabled{{end}}{{end}}>Generate and run</button>
     </form>
+    {{if .DiagnosticsError}}<p role="alert">{{.DiagnosticsError}}</p>{{end}}
+    {{if .DiagnosticJSON}}
+      <section aria-labelledby="diagnostics-title">
+        <h2 id="diagnostics-title">Generation diagnostics</h2>
+        <p>Generation duration: {{.Investigation.GenerationDuration}}. Execution duration: {{.Investigation.ExecutionDuration}}.</p>
+        <p>Timings are in milliseconds. Missing fields were not reported or were not reached; they are not zero measurements.</p>
+        <p>A timeout does not prove the question is too complex. Time waiting for the first response includes upstream processing and network latency.</p>
+        <details open>
+          <summary>Request, response and network metadata</summary>
+          <pre><code>{{.DiagnosticJSON}}</code></pre>
+        </details>
+      </section>
+    {{end}}
     {{if and .Investigation .Investigation.Query.Cypher}}
       <section aria-labelledby="query-title">
         <h2 id="query-title">Generated Cypher</h2>

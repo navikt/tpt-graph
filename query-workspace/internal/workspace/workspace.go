@@ -12,8 +12,9 @@ import (
 var ErrNotFound = errors.New("saved query not found")
 
 type GeneratedQuery struct {
-	Cypher     string         `json:"cypher"`
-	Parameters map[string]any `json:"parameters"`
+	Cypher      string                 `json:"cypher"`
+	Parameters  map[string]any         `json:"parameters"`
+	Diagnostics *GenerationDiagnostics `json:"-"`
 }
 
 type QueryResult struct {
@@ -96,19 +97,19 @@ func (s *Service) Ask(ctx context.Context, question string) (Investigation, erro
 		if s.latencies != nil {
 			s.latencies.GenerationFailed()
 		}
-		return Investigation{Question: question, GenerationDuration: generationDuration}, fmt.Errorf("generating query: %w", err)
+		return Investigation{Question: question, Query: generated, GenerationDuration: generationDuration}, fmt.Errorf("generating query: %w", err)
 	}
 	if strings.TrimSpace(generated.Cypher) == "" {
 		if s.latencies != nil {
 			s.latencies.GenerationFailed()
 		}
-		return Investigation{Question: question, GenerationDuration: generationDuration}, errors.New("model returned an empty query")
+		return Investigation{Question: question, Query: generated, GenerationDuration: generationDuration}, errors.New("model returned an empty query")
 	}
 	if len(generated.Cypher) > 100_000 {
 		if s.latencies != nil {
 			s.latencies.GenerationFailed()
 		}
-		return Investigation{Question: question, GenerationDuration: generationDuration}, errors.New("generated query exceeds 100000 characters")
+		return Investigation{Question: question, Query: generated, GenerationDuration: generationDuration}, errors.New("generated query exceeds 100000 characters")
 	}
 	if err := validateReadQuery(generated.Cypher); err != nil {
 		if s.latencies != nil {

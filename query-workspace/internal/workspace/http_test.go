@@ -20,6 +20,50 @@ import (
 	"tpt-graph/query-workspace/internal/schema"
 )
 
+func TestAskDisplaysGenerationDiagnosticsOnSuccessAndFailure(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "success", true: "failure"}[failed], func(t *testing.T) {
+			d := &GenerationDiagnostics{
+				Model: "test-model", ModelVersion: "model-version-123", ResponseID: "response-123",
+				TraceID: "0123456789abcdef0123456789abcdef", FinishReason: "STOP",
+				Usage:    &GenerationUsage{PromptTokens: 120, ThinkingTokens: 25},
+				Attempts: []HTTPAttempt{{HTTPStatus: 200, DurationMS: 100}},
+				Outcome:  "success",
+			}
+			generated := GeneratedQuery{Cypher: "RETURN 1", Parameters: map[string]any{}, Diagnostics: d}
+			var generateErr error
+			if failed {
+				d.Outcome, d.HTTPStatus, d.APIStatus = "upstream_timeout", 504, "DEADLINE_EXCEEDED"
+				d.Usage, d.ModelVersion, d.ResponseID = nil, "", ""
+				generated.Cypher = ""
+				generateErr = &GenerationError{Kind: "upstream_timeout", Message: "Google timed out. Try narrowing the question."}
+			}
+			executor := &testExecutor{}
+			handler := NewHTTPHandler(NewService(testGenerator{query: generated, err: generateErr}, executor, &testCatalog{}), nil, nil)
+			request := httptest.NewRequest(http.MethodPost, "/ask", strings.NewReader("question=Find+nodes"))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			body := response.Body.String()
+			for _, value := range []string{"Generation diagnostics", d.TraceID, "test-model", "Generation duration", "http_attempts"} {
+				if !strings.Contains(body, value) {
+					t.Fatalf("missing %q from diagnostic page: %s", value, body)
+				}
+			}
+			if failed {
+				if executor.query != "" || !strings.Contains(body, "DEADLINE_EXCEEDED") || !strings.Contains(body, "Google timed out") {
+					t.Fatal("failure lost diagnostics or executed a query")
+				}
+				if strings.Contains(body, `"prompt_tokens": 0`) {
+					t.Fatal("missing token usage was presented as zero usage")
+				}
+			} else if !strings.Contains(body, "model-version-123") || !strings.Contains(body, "response-123") {
+				t.Fatal("successful response metadata was not displayed")
+			}
+		})
+	}
+}
+
 func TestInvestigationFailureTracesAndCorrelatesLogsDespiteHTTP200(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))

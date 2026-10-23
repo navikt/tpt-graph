@@ -106,6 +106,36 @@ Open [Nais APM](https://grafana.nav.cloud.nais.io/a/nais-apm-app) and select
 An investigation can return an HTTP 200 page containing an error; its request
 span is still marked as failed.
 
+## Generation diagnostics
+
+Every generation attempt displays a diagnostic JSON panel, including failures
+that produce no query. It includes model/location/settings, prompt version,
+question and system-instruction byte counts, schema size/hash/capture time,
+elapsed time, trace ID, HTTP/API status, and response metadata when available.
+Response metadata includes model version, response ID, finish/block reasons,
+candidate count, and prompt/output/thinking/cached/tool/total token counts.
+
+Each outbound attempt records connection reuse, DNS, TCP and TLS durations,
+elapsed time to connection readiness, request completion and first response
+byte, time waiting after the request was written, total HTTP duration, and
+selected request-ID headers. All numeric timings are milliseconds. Connection
+setup phases can be absent on reused connections. Missing usage or response
+fields mean unavailable, not zero. Waiting for the first response includes
+provider processing and network latency; it cannot distinguish Google's
+queueing from model computation.
+
+The same metadata is recorded in the structured `query generation completed`
+log under `generation`; key outcome/model/token fields also appear on the
+generation span. Prompts, questions, schema text, raw response bodies, headers
+other than request IDs, and generated queries are not included in diagnostics.
+Diagnostics are not persisted in saved queries.
+
+Google deadlines and local deadlines have distinct outcomes. Output-limit,
+blocked, incomplete and malformed responses are not executed. A deadline alone
+does not establish that a question is too complex. Request settings, prompts,
+retry behavior and the 45-second generation budget are unchanged so the added
+measurements can be compared with the existing baseline.
+
 ## Optional integration checks
 
 Ordinary tests do not need external services. Set these only for disposable
