@@ -3,8 +3,19 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - '**.md'
+    paths:
+      - 'cmd/tpt-graph/**'
+      - 'internal/config/**'
+      - 'internal/graphapi/**'
+      - 'internal/handler/**'
+      - 'internal/neo4j/**'
+      - 'internal/telemetry/**'
+      - 'internal/whodis/**'
+      - 'go.mod'
+      - 'go.sum'
+      - 'Dockerfile'
+      - '.nais/nais.yaml'
+      - '.github/workflows/main.yaml'
 jobs:
   build:
     permissions:

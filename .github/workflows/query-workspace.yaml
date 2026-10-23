@@ -1,0 +1,31 @@
+name: Build and deploy query workspace
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'query-workspace/**'
+      - '.nais/query-workspace.yaml'
+      - '.github/workflows/query-workspace.yaml'
+jobs:
+  build:
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    environment: prod-gcp:appsec
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: nais/docker-build-push@0e73849f69ff260ee27597553c0a7848ca4e9795 # v0
+        id: docker-push
+        with:
+          team: appsec
+          image_suffix: -query-workspace
+          docker_context: query-workspace
+      - uses: nais/deploy/actions/deploy@849e900e3cfa7faf7ad1532bb3a3e6499c932199 # ratchet:nais/deploy/actions/deploy@v2
+        env:
+          RESOURCE: .nais/query-workspace.yaml
+          CLUSTER: prod-gcp
+          IMAGE: ${{ steps.docker-push.outputs.image }}
