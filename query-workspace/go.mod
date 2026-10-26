@@ -3,7 +3,7 @@ module tpt-graph/query-workspace
 go 1.26.3
 
 require (
-	github.com/jackc/pgx/v5 v5.7.5
+	github.com/jackc/pgx/v5 v5.9.2
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.5
 	github.com/pressly/goose/v3 v3.26.0
 	github.com/prometheus/client_golang v1.24.1
@@ -52,7 +52,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.47.0
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
-	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/net v0.59.0
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
