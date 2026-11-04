@@ -57,7 +57,7 @@ func TestRowCollectorExtractsDistinctGraphEntities(t *testing.T) {
 
 	wantRows := [][]string{
 		{"(:GitHubRepository) tpt-graph", "(:GitHubRepository) tpt-graph -[:LANGUAGE]-> (:ProgrammingLanguage) Go", ""},
-		{"(:ProgrammingLanguage) Go", "[:LANGUAGE]", `{"items":["(:Thing) n3","plain"]}`},
+		{"(:ProgrammingLanguage) Go", `{"type":"LANGUAGE","id":"r1","start":"n1","end":"n2","properties":{"size":3}}`, `{"items":["(:Thing) n3","plain"]}`},
 	}
 	if !reflect.DeepEqual(result.Rows, wantRows) {
 		t.Fatalf("rows = %#v, want %#v", result.Rows, wantRows)
@@ -89,6 +89,29 @@ func TestRowCollectorCountsGraphEntitiesAgainstOutputBudget(t *testing.T) {
 	result := collector.result()
 	if !result.Truncated || len(result.Rows) != 1 || len(result.Graph.Nodes) != 1 || len(result.Graph.RowNodes) != 1 {
 		t.Fatalf("rejected row leaked graph entities: %#v", result)
+	}
+}
+
+func TestRowCollectorCountsRepeatedNodeReferencesAgainstOutputBudget(t *testing.T) {
+	node := dbtype.Node{ElementId: "n1", Labels: []string{"A"}}
+	repeated := make([]any, 50)
+	for i := range repeated {
+		repeated[i] = node
+	}
+	probe := newRowCollector([]string{"nodes"}, 10, 1<<20)
+	probe.add([]any{repeated})
+	firstRow := probe.bytesUsed
+	row, err := encodedSize(probe.rows[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	collector := newRowCollector([]string{"nodes"}, 10, firstRow+row+1)
+	if !collector.add([]any{repeated}) || collector.add([]any{repeated}) {
+		t.Fatal("node references of a row without new entities were not counted against the budget")
+	}
+	if result := collector.result(); !result.Truncated || len(result.Graph.RowNodes) != 1 {
+		t.Fatalf("rejected row leaked node references: %#v", result.Graph.RowNodes)
 	}
 }
 

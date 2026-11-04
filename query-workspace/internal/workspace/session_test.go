@@ -59,3 +59,17 @@ func TestSessionStoreEvictsLeastRecentlyUsedButNeverTheCurrentSession(t *testing
 		t.Fatal("the session being updated was evicted")
 	}
 }
+
+func TestSessionStoreCountsNewSessionsAgainstTheBudget(t *testing.T) {
+	store := newSessionStore(1000, time.Hour, (&sessionClock{now: time.Unix(0, 0)}).Now)
+	first := loadSession(store, "")
+	for range 10 {
+		loadSession(store, "")
+	}
+	if !loadSession(store, first.ID).Ended {
+		t.Fatal("empty sessions bypassed the memory budget")
+	}
+	if store.used > store.budget {
+		t.Fatalf("used %d bytes, budget %d", store.used, store.budget)
+	}
+}

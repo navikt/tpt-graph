@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -158,8 +159,9 @@ func (h *HTTPHandler) runSaved(w http.ResponseWriter, r *http.Request) {
 	state := modeState{Draft: investigation.Question}
 	if mode == ModeCypher {
 		state.Draft = query.Cypher
-		if state.Parameters, err = editableParameters(query.Parameters); err != nil {
-			h.logRunError(r, "encoding saved query parameters", err)
+		var encodeErr error
+		if state.Parameters, encodeErr = editableParameters(query.Parameters); encodeErr != nil {
+			h.logRunError(r, "encoding saved query parameters", encodeErr)
 		}
 	}
 	session = h.storeRun(session, mode, state, investigation, err)
@@ -242,6 +244,7 @@ func (h *HTTPHandler) save(w http.ResponseWriter, r *http.Request) {
 	if mode != ModeCypher {
 		mode = ModeAsk
 	}
+	session = h.keepDraft(session, mode, r.Form)
 	form := saveView{Status: "error", Name: r.FormValue("name"), Folder: r.FormValue("folder")}
 	run := session.Modes[mode].Run
 	if run == nil || run.ID != r.FormValue("run") {
@@ -274,6 +277,30 @@ func (h *HTTPHandler) save(w http.ResponseWriter, r *http.Request) {
 	state.Run = &saved
 	session.Modes[mode] = state
 	h.render(w, r, http.StatusOK, session, mode, saveView{}, "")
+}
+
+// keepDraft stores the composer text that the save form carries (with JavaScript), so saving the
+// last run does not discard edits made since.
+func (h *HTTPHandler) keepDraft(session sessionView, mode InputMode, form url.Values) sessionView {
+	field := "question"
+	if mode == ModeCypher {
+		field = "cypher"
+	}
+	if _, ok := form[field]; !ok {
+		return session
+	}
+	state := session.Modes[mode]
+	state.Draft = form.Get(field)
+	if mode == ModeCypher {
+		state.Parameters = form.Get("parameters")
+	}
+	h.sessions.update(session.ID, func(s *browserSession) {
+		stored := s.modes[mode]
+		stored.Draft, stored.Parameters = state.Draft, state.Parameters
+		s.modes[mode] = stored
+	})
+	session.Modes[mode] = state
+	return session
 }
 
 // storeRun records a finished run as the mode's last run. The returned view includes it even if

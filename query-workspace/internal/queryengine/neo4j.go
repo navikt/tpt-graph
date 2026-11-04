@@ -168,7 +168,7 @@ func (c *rowCollector) add(values []any) bool {
 		row[i] = entities.cell(value)
 	}
 	size, err := encodedSize(row)
-	if err == nil && (len(entities.nodes) > 0 || len(entities.relationships) > 0) {
+	if err == nil && (len(entities.nodes) > 0 || len(entities.relationships) > 0 || len(entities.rowNodes) > 0) {
 		var graphSize int
 		graphSize, err = encodedSize(entities.nodes, entities.relationships, entities.rowNodes)
 		size += graphSize
@@ -212,6 +212,16 @@ func (c *rowCollector) result() workspace.QueryResult {
 	return result
 }
 
+// relationshipValue is how a returned relationship appears in the table: in full, since the graph
+// view does not show relationship properties.
+type relationshipValue struct {
+	Type       string         `json:"type"`
+	ID         string         `json:"id"`
+	Start      string         `json:"start"`
+	End        string         `json:"end"`
+	Properties map[string]any `json:"properties"`
+}
+
 // rowEntities collects the graph entities in one row that have not been collected before.
 type rowEntities struct {
 	seen, pending map[string]bool
@@ -226,7 +236,7 @@ func (e *rowEntities) cell(value any) string {
 		return ""
 	case string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
 		return fmt.Sprint(value)
-	case dbtype.Node, dbtype.Relationship, dbtype.Path:
+	case dbtype.Node, dbtype.Path:
 		return e.display(value).(string)
 	}
 	return marshalDisplay(e.display(value))
@@ -240,7 +250,9 @@ func (e *rowEntities) display(value any) any {
 		return nodeDisplay(value)
 	case dbtype.Relationship:
 		e.relationship(value)
-		return "[:" + value.Type + "]"
+		return relationshipValue{
+			Type: value.Type, ID: value.ElementId, Start: value.StartElementId, End: value.EndElementId, Properties: value.Props,
+		}
 	case dbtype.Path:
 		var text strings.Builder
 		for i, node := range value.Nodes {

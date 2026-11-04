@@ -106,3 +106,24 @@ func TestSaveRejectsRunThatIsNoLongerCurrent(t *testing.T) {
 		t.Fatal("save of a replaced run was not rejected explicitly")
 	}
 }
+
+func TestSaveKeepsTheUnsentDraftButStoresTheRun(t *testing.T) {
+	catalog := &testCatalog{}
+	handler := newTestHandler(NewService(testGenerator{}, &testExecutor{}, catalog), nil, nil)
+	form := saveForm(t, submitForm(handler, "/run", url.Values{"cypher": {"RETURN 1"}}).Body.String())
+	form.Set("name", "One")
+	form.Set("cypher", "RETURN 2")
+	form.Set("parameters", `{"x": 1}`)
+	body := submitForm(handler, "/save", form).Body.String()
+	if len(catalog.queries) != 1 || catalog.queries[0].Cypher != "RETURN 1" {
+		t.Fatalf("save did not store the run snapshot: %#v", catalog.queries)
+	}
+	for _, want := range []string{">RETURN 2</textarea>", "{&#34;x&#34;: 1}</textarea>", `id="stale-notice" >`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("save discarded the unsent draft; missing %q", want)
+		}
+	}
+	if !strings.Contains(getPage(handler, "/?mode=cypher").Body.String(), ">RETURN 2</textarea>") {
+		t.Fatal("the unsent draft was not kept in the session")
+	}
+}

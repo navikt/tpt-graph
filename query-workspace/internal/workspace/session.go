@@ -81,6 +81,9 @@ func (s *sessionStore) load(w http.ResponseWriter, r *http.Request) sessionView 
 	session.lastUsed = s.now()
 	session.element = s.recency.PushFront(session)
 	s.sessions[session.id] = session
+	session.size = session.measure()
+	s.used += session.size
+	s.evict(session)
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: session.id, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
 	})

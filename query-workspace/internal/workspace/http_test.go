@@ -225,6 +225,17 @@ func TestRunSavedUsesStoredQueryWithoutGenerating(t *testing.T) {
 	}
 }
 
+func TestRunSavedCypherKeepsExecutionFailure(t *testing.T) {
+	stored := SavedQuery{ID: "saved-1", Name: "Slow", FolderPath: "Drafts", Kind: KindCypher, Cypher: "MATCH (n) RETURN n", Parameters: map[string]any{"limit": 5}}
+	executor := &testExecutor{err: errors.New("TransactionTimedOut")}
+	handler := newTestHandler(NewService(testGenerator{}, executor, &testCatalog{query: stored}), nil, nil)
+	response := submitForm(handler, "/queries/saved-1/run", nil)
+	body := response.Body.String()
+	if !strings.Contains(body, "Execution failed before returning any rows.") || strings.Contains(body, "This query matched nothing.") {
+		t.Fatalf("saved Cypher failure was rendered as a successful run: %s", body)
+	}
+}
+
 func TestSaveWrittenCypherDefaultsFolderToDrafts(t *testing.T) {
 	catalog := &testCatalog{}
 	handler := newTestHandler(NewService(testGenerator{}, &testExecutor{}, catalog), nil, nil)

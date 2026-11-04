@@ -50,7 +50,8 @@ HttpOnly). Sessions expire after 60 minutes idle, and all sessions together are
 capped at 64 MiB: expired sessions are evicted first, then the least recently
 used. Restarts lose sessions; the UI then says the session ended and reruns
 nothing. Saving (`POST /save`) stores the last run of the current mode by run ID,
-even when the draft has since changed (a stale notice is shown). A run that is no
+even when the draft has since changed (a stale notice is shown); with JavaScript the
+edited draft is kept. A run that is no
 longer current is rejected, and the user must run the query again. Results and
 generation diagnostics are not stored in the catalogue.
 

@@ -45,6 +45,22 @@ document.querySelectorAll("form[data-run]").forEach(form => {
   });
 });
 
+// Saving stores the last run; sending the composer text along keeps unsent edits in the draft.
+const saveForm = document.querySelector("form.save-form");
+if (saveForm) {
+  saveForm.addEventListener("submit", () => {
+    saveForm.querySelectorAll("[data-draft]").forEach(input => input.remove());
+    composer.querySelectorAll("#question, #cypher, #parameters").forEach(field => {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = field.name;
+      input.value = field.value;
+      input.dataset.draft = "";
+      saveForm.append(input);
+    });
+  });
+}
+
 window.addEventListener("pageshow", () => {
   document.getElementById("running").hidden = true;
   document.querySelectorAll("[data-idle-content]").forEach(element => { element.hidden = false; });
