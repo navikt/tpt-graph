@@ -14,46 +14,63 @@ go build ./cmd/query-workspace
 ## Investigation workbench
 
 The UI is server-rendered with `html/template`. Templates, one stylesheet, one
-progressive-enhancement script and self-hosted IBM Plex fonts are embedded in the
-Go binary. There is no frontend framework, build pipeline or external asset
-request. Font licences are included alongside the static files.
+progressive-enhancement script, a vendored Cytoscape.js (MIT) and self-hosted IBM
+Plex fonts are embedded in the Go binary. There is no frontend framework, build
+pipeline or external asset request. Font licences are included alongside the
+static files; the Cytoscape.js licence is kept in its file header.
 
-The catalogue groups saved queries by category. Search matches names, categories
-and original questions, using client-side filtering when JavaScript is available
-and `GET /?q=...` otherwise. The investigation area shows results before the
-executed Cypher, parameters, collapsible diagnostics and save form. Cypher
-formatting affects display only; execution, copying and saving use the original
-query. Tables scroll independently, and below 760px the catalogue follows the
-investigation.
+The composer has two modes. **Ask a question** generates Cypher with Vertex AI,
+then validates and runs it immediately (`POST /ask`). **Write Cypher** runs
+hand-written Cypher with optional JSON parameters (`POST /run`) and needs no
+schema snapshot or model. Both paths use the same read-only validation as
+generated queries; `CALL`, writes and block comments are rejected before
+execution. Each mode keeps its own draft and last result. Switching mode
+(`POST /mode`) stores the current draft. **What ran** shows the executed Cypher
+with parameter values inline. In ask mode, **Open in Write Cypher**
+(`POST /runs/{id}/open`) copies that query and its parameters into the Cypher
+draft without running it.
 
-Generate and run still validates and executes immediately, without a review
-step. Saved reruns skip generation. With JavaScript enabled, submission shows one
-honest "Running..." status; completed steps are derived from the service's actual
-execution stage. Live phase streaming, review-before-execution and duplicate-name
-restrictions are not implemented.
+Results returning nodes or relationships can also be drawn as a graph. A
+Table/Graph/Both toggle (JavaScript only) remembers its choice per tab. The graph
+draws at most 300 nodes and 2,000 relationships, and only relationships whose
+endpoints are both returned; nothing extra is fetched. Every node is also listed
+as a button, so selection works by keyboard, and selecting a node highlights its
+rows in the table. Without JavaScript the table remains available.
+
+Saved queries live in one shared catalogue of nested folders (`Team > GitHub`).
+New folders default to `Drafts`. A saved query is either a question (rerun skips
+generation) or written Cypher (rerun opens the Write Cypher tab with a compact
+run strip). Search matches names, folder paths and questions, using client-side
+filtering when JavaScript is available and `GET /?q=...` otherwise. Folder
+collapse state is kept in `localStorage`, and the sidebar can be hidden
+(`POST /sidebar`, a cookie).
+
+Run state is held in an in-memory session (`query_workspace_session` cookie,
+HttpOnly). Sessions expire after 60 minutes idle, and all sessions together are
+capped at 64 MiB: expired sessions are evicted first, then the least recently
+used. Restarts lose sessions; the UI then says the session ended and reruns
+nothing. Saving (`POST /save`) stores the last run of the current mode by run ID,
+even when the draft has since changed (a stale notice is shown); with JavaScript the
+edited draft is kept. A run that is no
+longer current is rejected, and the user must run the query again. Results and
+generation diagnostics are not stored in the catalogue.
+
+The saved-folders migration (`20261104000000_saved_query_folders.sql`) is
+destructive: it drops and recreates `saved_queries`, so existing saved queries
+are lost.
 
 Zero rows, incomplete output, partial execution failures and generation failures
 have distinct notices. Schema freshness describes metadata, not graph-data
 freshness. Truncation copy refers to an output limit rather than assuming a row
 limit: collection can stop at the row or byte cap. Catalogue failures do not hide
 investigation results or masquerade as an empty catalogue, but do hide the save
-form. No HTTP status is invented for an internal catalogue error.
+form.
 
-Saved queries now retain the original question. The additive PostgreSQL migration
-keeps existing rows with an empty question; those reruns use the query name as a
-fallback. Results and generation diagnostics are not stored in the catalogue.
-Successful saves re-render the confirmation and refreshed catalogue. Validation
-errors retain the entered name/category and investigation evidence without
-rerunning the query. An authenticated hidden form snapshot carries that transient
-evidence, including partial rows and diagnostics, through the save POST. Its key
-is local to the application process: after a restart, an old save form is rejected
-explicitly and the user must run the query again. Save requests are limited to
-8 MiB, including that snapshot.
-
-Without JavaScript, forms, catalogue search and native disclosure controls still
-work. JavaScript adds Cmd/Ctrl+Enter submission, Copy Cypher, instant filtering
-and the pending state. Keyboard focus is visible; errors are associated with
-invalid fields, and status messages do not rely on colour alone.
+Without JavaScript, forms, catalogue search, mode switching and native disclosure
+controls still work. JavaScript adds Cmd/Ctrl+Enter submission, Copy Cypher,
+instant filtering, folder collapse, the result view toggle, the graph and the
+pending state. Keyboard focus is visible; errors are associated with invalid
+fields, and status messages do not rely on colour alone.
 
 ## Runtime configuration
 

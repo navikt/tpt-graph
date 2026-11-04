@@ -1,44 +1,86 @@
 {{define "run_strip"}}
 <section class="run-strip" aria-label="Run status">
   <p class="run-meta"><strong>Run</strong> · {{.Source}}{{if .Time}} · {{.Time}}{{end}}</p>
-  <ol class="steps">{{range .Steps}}<li class="step"><span class="{{if eq .Status "done"}}ok{{else if eq .Status "failed"}}err-ink{{else}}muted{{end}}" aria-hidden="true">{{.Glyph}}</span><strong>{{.Label}}</strong><small>{{.Status}} · {{.Detail}}</small></li>{{end}}</ol>
+  {{if not .Compact}}<ol class="steps">{{range .Steps}}<li class="step"><span class="{{if eq .Status "done"}}ok{{else if eq .Status "failed"}}err-ink{{else}}muted{{end}}" aria-hidden="true">{{.Glyph}}</span><strong>{{.Label}}</strong><small>{{.Status}} · {{.Detail}}</small></li>{{end}}</ol>{{end}}
 </section>
 {{end}}
 
 {{define "results"}}
+{{$run := .Run}}
 <section class="results" aria-labelledby="results-title">
-  <div class="section-heading"><h2 id="results-title">Results</h2><span>{{.Summary}}</span></div>
-  {{range .Notices}}
-    <div class="notice {{.Tone}}" role="{{.Role}}"><span aria-hidden="true">{{.Glyph}}</span><div><strong>{{.Title}}</strong> {{.Body}}{{if .Code}}<code>{{.Code}}</code>{{end}}</div></div>
-  {{end}}
-  {{if .Columns}}
-    <div class="table-scroll" tabindex="0" role="region" aria-label="Query results">
+  <div class="section-heading results-heading">
+    <h2 id="results-title">Results</h2><span>{{$run.Summary}}</span>
+    {{if $run.Rows}}
+      <div class="segmented js-only" role="group" aria-label="Result view" id="result-view" data-has-graph="{{if $run.Graph}}{{if $run.Graph.Drawable}}true{{end}}{{end}}" hidden>
+        <button type="button" data-view="table" aria-pressed="false">Table</button>
+        {{if and $run.Graph $run.Graph.Drawable}}
+          <button type="button" data-view="graph" aria-pressed="false">Graph</button>
+          <button type="button" data-view="both" aria-pressed="false">Both</button>
+        {{else}}
+          <button type="button" data-view="graph" aria-pressed="false" disabled title="Needs nodes, relationships or paths in RETURN">Graph</button>
+          <button type="button" data-view="both" aria-pressed="false" disabled title="Needs nodes, relationships or paths in RETURN">Both</button>
+        {{end}}
+      </div>
+    {{end}}
+  </div>
+  {{if and $run.Rows (not $run.Graph)}}<p class="graph-hint">Graph view needs nodes, relationships or paths in <code>RETURN</code>. This query returns property values only.</p>{{end}}
+  {{range $run.Notices}}{{template "notice" .}}{{end}}
+  {{with $run.Graph}}{{template "graph" .}}{{end}}
+  {{if $run.Columns}}
+    <div class="table-scroll" tabindex="0" role="region" aria-label="Query results" data-result-view="table">
       <table>
-        <thead><tr><th scope="col" class="row-number">#</th>{{range .Columns}}<th scope="col">{{.}}</th>{{end}}</tr></thead>
-        <tbody>{{range .Rows}}<tr><td class="row-number">{{.Number}}</td>{{range .Cells}}<td>{{.}}</td>{{end}}</tr>{{end}}</tbody>
+        <thead><tr><th scope="col" class="row-number">#</th>{{range $run.Columns}}<th scope="col">{{.}}</th>{{end}}</tr></thead>
+        <tbody>{{range $run.Rows}}<tr{{if .Nodes}} data-nodes="{{.Nodes}}"{{end}}><td class="row-number">{{.Number}}</td>{{range .Cells}}<td>{{.}}</td>{{end}}</tr>{{end}}</tbody>
       </table>
-      {{if not .Rows}}<p class="no-rows">No rows.</p>{{end}}
+      {{if not $run.Rows}}<p class="no-rows">No rows.</p>{{end}}
     </div>
+  {{end}}
+</section>
+{{end}}
+
+{{define "notice"}}<div class="notice {{.Tone}}" role="{{.Role}}"><span aria-hidden="true">{{.Glyph}}</span><div><strong>{{.Title}}</strong> {{.Body}}{{if .Code}}<code>{{.Code}}</code>{{end}}</div></div>{{end}}
+
+{{define "graph"}}
+<section class="graph-section" aria-label="Graph view" data-result-view="graph">
+  {{range .Notices}}{{template "notice" .}}{{end}}
+  {{if .Drawable}}
+  <noscript><p class="notice info">The graph view needs JavaScript. The table has every row.</p></noscript>
+  <div class="graph-panel js-only" hidden>
+    <div class="graph-main">
+      <ul class="graph-legend" aria-label="Labels in the graph">{{range .Legend}}<li><span class="dot" style="background:{{.Color}}" aria-hidden="true"></span><code>{{.Label}}</code> <span class="muted">{{.Count}}</span></li>{{end}}</ul>
+      <div class="graph-canvas-wrap"><div id="graph-canvas" class="graph-canvas" aria-hidden="true"></div></div>
+      <details class="node-list">
+        <summary><span aria-hidden="true">▸</span> Nodes in this result · {{len .Nodes}}</summary>
+        <ul>{{range .Nodes}}<li><button type="button" data-node="{{.ID}}"><code>{{.Label}}</code> {{.Name}}</button></li>{{end}}</ul>
+      </details>
+    </div>
+    <aside class="graph-details" aria-label="Selected node" aria-live="polite" id="graph-details">
+      <p class="muted">Select a node to see its properties and the relationships returned with it.</p>
+    </aside>
+  </div>
+  <p class="graph-note js-only" hidden>Shows only the nodes and relationships this query returned — not their full neighbourhood. Position on the canvas carries no meaning. Select a node to inspect it.</p>
+  <script type="application/json" id="graph-data">{{.Payload}}</script>
   {{end}}
 </section>
 {{end}}
 
 {{define "what_ran"}}
+{{$run := .Run}}
 <section class="what-ran" aria-labelledby="query-title">
-  <div class="section-heading"><h2 id="query-title">{{.QueryTitle}}</h2><span>{{.QueryCaveat}}</span></div>
-  <div class="code-grid">
-    <div class="code-panel">
-      <div class="panel-header"><span>Cypher</span><button type="button" id="copy-cypher" class="js-only" hidden>Copy</button></div>
-      <pre><code id="cypher">{{.Cypher}}</code></pre>
-      <pre id="raw-cypher" hidden>{{.RawCypher}}</pre>
-      <p id="copy-status" class="sr-only" role="status"></p>
+  <div class="section-heading"><h2 id="query-title">{{$run.QueryTitle}}</h2><span>{{$run.QueryCaveat}}</span></div>
+  <div class="code-panel">
+    <div class="panel-header">
+      <span><strong>Cypher</strong>{{if $run.ParamCount}} · {{$run.ParamCount}} parameter value{{if ne $run.ParamCount 1}}s{{end}} shown inline, highlighted{{end}}</span>
+      <button type="button" id="copy-cypher" class="js-only" title="Copies a runnable version with values filled in" hidden>Copy</button>
     </div>
-    <div class="code-panel">
-      <div class="panel-header">Parameters</div>
-      {{if .Params}}<dl class="parameters">{{range .Params}}<dt>{{.Key}}</dt><dd>{{.Value}}</dd>{{end}}</dl>{{else}}<p class="parameters">— none</p>{{end}}
-    </div>
+    <pre><code id="cypher">{{range $run.Segments}}{{if .Param}}<mark title="{{.Title}}">{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</code></pre>
+    <pre id="copy-text" hidden>{{$run.CopyText}}</pre>
+    <p id="copy-status" class="sr-only" role="status"></p>
   </div>
-  <p class="query-note">{{if eq .QueryTitle "What ran"}}Query restrictions and read routing were applied.{{else}}This query was not executed.{{end}} They are not a database-enforced read-only guarantee. A matching graph pattern shows that data is connected this way, not that it constitutes an attack path.</p>
+  <div class="what-ran-footer">
+    <p class="query-note">{{if eq $run.QueryTitle "What ran"}}Query restrictions and read routing were applied.{{else}}This query was not executed.{{end}} They are not a database-enforced read-only guarantee. A matching graph pattern shows that data is connected this way, not that it constitutes an attack path.</p>
+    {{if and (eq .Mode "ask") .RunID}}<form method="post" action="/runs/{{.RunID}}/open"><button type="submit">Open in Write Cypher</button></form>{{end}}
+  </div>
 </section>
 {{end}}
 
@@ -53,19 +95,17 @@
 
 {{define "save_form"}}
 {{if eq .Save.Status "done"}}
-<p class="ok-ink" role="status"><strong>✓ Saved</strong> "{{.Save.Name}}" in {{.Save.Category}}. It now appears in the catalogue and will run against the current graph each time.</p>
+<p class="ok-ink" role="status"><strong>✓ Saved</strong> "{{.Save.Name}}" in {{.Save.Folder}}. It now appears in the catalogue and will run against the current graph each time.</p>
 {{else}}
 <form method="post" action="/save" class="save-form">
-  <div class="section-heading"><h2>Save this query</h2><span>Stores question, Cypher and parameters. Results are not saved.</span></div>
-  <input type="hidden" name="question" value="{{.Question}}">
-  <input type="hidden" name="cypher" value="{{.Investigation.Query.Cypher}}">
-  <input type="hidden" name="parameters" value="{{.GeneratedJSON}}">
-  {{if .RunContext}}<input type="hidden" name="context" value="{{.RunContext}}">{{end}}
+  <div class="section-heading"><h2>Save this query</h2><span>{{if eq .Mode "cypher"}}Stores the Cypher and parameters as they last ran.{{else}}Stores question, Cypher and parameters as they last ran.{{end}} Results are not saved.</span></div>
+  <input type="hidden" name="run" value="{{.RunID}}">
+  <input type="hidden" name="mode" value="{{.Mode}}">
   {{if .Save.Error}}<p id="save-err" class="notice err" role="alert"><strong>✕ Error:</strong> {{.Save.Error}}</p>{{end}}
   <div class="save-fields">
     <div><label for="name">Name (required)</label><input id="name" name="name" value="{{.Save.Name}}" required maxlength="200" {{if .Save.NameInvalid}}aria-invalid="true" aria-describedby="save-err"{{end}}></div>
-    <div><label for="category">Category</label><input id="category" name="category" value="{{.Save.Category}}" list="categories" maxlength="100" {{if .Save.CategoryInvalid}}aria-invalid="true" aria-describedby="save-err"{{end}}></div>
-    <datalist id="categories">{{range .Categories}}<option value="{{.}}">{{end}}</datalist>
+    <div><label for="folder">Folder — use › or &gt; for subfolders</label><input id="folder" name="folder" value="{{.Save.Folder}}" list="folders" placeholder="Kari Nordmann > GitHub > Vuln search" {{if .Save.FolderInvalid}}aria-invalid="true" aria-describedby="save-err"{{end}}></div>
+    <datalist id="folders">{{range .Catalogue.Paths}}<option value="{{.}}">{{end}}</datalist>
     <button type="submit">Save query</button>
   </div>
 </form>

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"html"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -39,7 +40,7 @@ func TestAskDisplaysGenerationDiagnosticsOnSuccessAndFailure(t *testing.T) {
 				generateErr = &GenerationError{Kind: "upstream_timeout", Message: "Google timed out. Try narrowing the question."}
 			}
 			executor := &testExecutor{}
-			handler := NewHTTPHandler(NewService(testGenerator{query: generated, err: generateErr}, executor, &testCatalog{}), nil, nil)
+			handler := newTestHandler(NewService(testGenerator{query: generated, err: generateErr}, executor, &testCatalog{}), nil, nil)
 			request := httptest.NewRequest(http.MethodPost, "/ask", strings.NewReader("question=Find+nodes"))
 			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			response := httptest.NewRecorder()
@@ -75,7 +76,7 @@ func TestInvestigationFailureTracesAndCorrelatesLogsDespiteHTTP200(t *testing.T)
 	})
 	var logs bytes.Buffer
 	logger := slog.New(observability.NewTraceHandler(slog.NewJSONHandler(&logs, nil)))
-	handler := NewHTTPHandler(NewService(
+	handler := newTestHandler(NewService(
 		testGenerator{err: context.DeadlineExceeded}, &testExecutor{}, &testCatalog{},
 	), logger, nil)
 	request := httptest.NewRequest(http.MethodPost, "/ask", strings.NewReader("question=Find+nodes"))
@@ -94,7 +95,7 @@ func TestInvestigationFailureTracesAndCorrelatesLogsDespiteHTTP200(t *testing.T)
 func TestCatalogueFailureDoesNotHideResultsOrPretendCatalogueIsEmpty(t *testing.T) {
 	for _, path := range []string{"/", "/ask"} {
 		t.Run(path, func(t *testing.T) {
-			handler := NewHTTPHandler(NewService(
+			handler := newTestHandler(NewService(
 				testGenerator{query: GeneratedQuery{Cypher: "RETURN 1"}},
 				&testExecutor{result: QueryResult{Columns: []string{"value"}, Rows: [][]string{{"available-result"}}}},
 				&testCatalog{listErr: errors.New("database unavailable")},
@@ -118,6 +119,30 @@ func TestCatalogueFailureDoesNotHideResultsOrPretendCatalogueIsEmpty(t *testing.
 				t.Fatal("catalogue failure hid or misrepresented successful query results")
 			}
 		})
+	}
+}
+
+// browser carries cookies between requests, as the workspace session depends on them.
+type browser struct {
+	handler http.Handler
+	cookies map[string]*http.Cookie
+}
+
+func newTestHandler(service *Service, logger *slog.Logger, schemas SchemaStatusProvider) *browser {
+	return &browser{handler: NewHTTPHandler(service, logger, schemas), cookies: make(map[string]*http.Cookie)}
+}
+
+func (b *browser) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	for _, cookie := range b.cookies {
+		r.AddCookie(cookie)
+	}
+	b.handler.ServeHTTP(w, r)
+	for _, cookie := range (&http.Response{Header: w.Header()}).Cookies() {
+		if cookie.MaxAge < 0 {
+			delete(b.cookies, cookie.Name)
+		} else {
+			b.cookies[cookie.Name] = &http.Cookie{Name: cookie.Name, Value: cookie.Value}
+		}
 	}
 }
 
@@ -169,7 +194,8 @@ func TestRunSavedUsesStoredQueryWithoutGenerating(t *testing.T) {
 	stored := SavedQuery{
 		ID:         "saved-1",
 		Name:       "Dependencies",
-		Category:   "Draft",
+		FolderPath: "Drafts",
+		Kind:       KindQuestion,
 		Cypher:     "MATCH (d:Dependency {name: $name}) RETURN d.version AS version",
 		Parameters: map[string]any{"name": "example"},
 	}
@@ -179,7 +205,7 @@ func TestRunSavedUsesStoredQueryWithoutGenerating(t *testing.T) {
 		executor,
 		&testCatalog{query: stored},
 	)
-	handler := NewHTTPHandler(service, nil, nil)
+	handler := newTestHandler(service, nil, nil)
 	request := httptest.NewRequest(http.MethodPost, "/queries/saved-1/run", nil)
 	response := httptest.NewRecorder()
 
@@ -199,28 +225,33 @@ func TestRunSavedUsesStoredQueryWithoutGenerating(t *testing.T) {
 	}
 }
 
-func TestSaveDefaultsCategoryToDraft(t *testing.T) {
+func TestRunSavedCypherKeepsExecutionFailure(t *testing.T) {
+	stored := SavedQuery{ID: "saved-1", Name: "Slow", FolderPath: "Drafts", Kind: KindCypher, Cypher: "MATCH (n) RETURN n", Parameters: map[string]any{"limit": 5}}
+	executor := &testExecutor{err: errors.New("TransactionTimedOut")}
+	handler := newTestHandler(NewService(testGenerator{}, executor, &testCatalog{query: stored}), nil, nil)
+	response := submitForm(handler, "/queries/saved-1/run", nil)
+	body := response.Body.String()
+	if !strings.Contains(body, "Execution failed before returning any rows.") || strings.Contains(body, "This query matched nothing.") {
+		t.Fatalf("saved Cypher failure was rendered as a successful run: %s", body)
+	}
+}
+
+func TestSaveWrittenCypherDefaultsFolderToDrafts(t *testing.T) {
 	catalog := &testCatalog{}
-	handler := NewHTTPHandler(NewService(testGenerator{}, &testExecutor{}, catalog), nil, nil)
-	request := httptest.NewRequest(
-		http.MethodPost,
-		"/save",
-		strings.NewReader("name=My+query&cypher=RETURN+1&parameters=%7B%7D"),
-	)
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response := httptest.NewRecorder()
-
-	handler.ServeHTTP(response, request)
-
+	handler := newTestHandler(NewService(testGenerator{}, &testExecutor{}, catalog), nil, nil)
+	response := submitForm(handler, "/run", url.Values{"cypher": {"RETURN 1"}})
+	form := saveForm(t, response.Body.String())
+	form.Set("name", "My query")
+	form.Set("folder", "")
+	response = submitForm(handler, "/save", form)
 	if response.Code != http.StatusOK {
 		t.Fatalf("want save confirmation status %d, got %d: %s", http.StatusOK, response.Code, response.Body.String())
 	}
-	if len(catalog.queries) != 1 || catalog.queries[0].Category != "Draft" {
-		t.Fatalf("saved queries = %#v, want one query in Draft", catalog.queries)
+	if len(catalog.queries) != 1 || catalog.queries[0].FolderPath != "Drafts" || catalog.queries[0].Kind != KindCypher || catalog.queries[0].Question != "" {
+		t.Fatalf("saved queries = %#v, want one Cypher query in Drafts", catalog.queries)
 	}
-	listRequest := httptest.NewRequest(http.MethodGet, "/", nil)
 	listResponse := httptest.NewRecorder()
-	handler.ServeHTTP(listResponse, listRequest)
+	handler.ServeHTTP(listResponse, httptest.NewRequest(http.MethodGet, "/", nil))
 	if listResponse.Code != http.StatusOK || !strings.Contains(listResponse.Body.String(), "My query") {
 		t.Fatalf("saved query is not visible in catalogue: status %d, body %s", listResponse.Code, listResponse.Body.String())
 	}
@@ -246,7 +277,7 @@ func TestAskDisplaysGeneratedQueryAndResults(t *testing.T) {
 		executor,
 		&testCatalog{},
 	)
-	handler := NewHTTPHandler(service, nil, nil)
+	handler := newTestHandler(service, nil, nil)
 	request := httptest.NewRequest(http.MethodPost, "/ask", strings.NewReader("question=Find+repositories"))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response := httptest.NewRecorder()
@@ -279,8 +310,8 @@ func TestAskRejectsWriteQueryBeforeExecution(t *testing.T) {
 
 	_, err := service.Ask(context.Background(), "create a node")
 
-	if err == nil || !strings.Contains(err.Error(), "read-only") {
-		t.Fatalf("want read-only validation error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "validation: write clause CREATE is not permitted") {
+		t.Fatalf("want write clause validation error, got %v", err)
 	}
 
 	if executor.query != "" {
@@ -326,28 +357,23 @@ func TestAskPropagatesCancellationToExecutor(t *testing.T) {
 	}
 }
 
-func TestSaveRejectsNullAndTrailingQueryParameters(t *testing.T) {
-	for _, parameters := range []string{"null", "{} {}"} {
+func TestRunWrittenRejectsInvalidParametersWithoutExecuting(t *testing.T) {
+	for _, parameters := range []string{"null", "{} {}", `{"language":`, `["PHP"]`} {
 		t.Run(parameters, func(t *testing.T) {
-			catalog := &testCatalog{}
-			handler := NewHTTPHandler(NewService(testGenerator{}, &testExecutor{}, catalog), nil, nil)
-			form := url.Values{
-				"name":       {"My query"},
-				"cypher":     {"RETURN 1"},
-				"parameters": {parameters},
+			executor := &testExecutor{}
+			handler := newTestHandler(NewService(testGenerator{}, executor, &testCatalog{}), nil, nil)
+			response := submitForm(handler, "/run", url.Values{"cypher": {"RETURN $language"}, "parameters": {parameters}})
+			body := response.Body.String()
+			if executor.query != "" {
+				t.Fatalf("query with invalid parameters was executed: %q", executor.query)
 			}
-
-			request := httptest.NewRequest(http.MethodPost, "/save", strings.NewReader(form.Encode()))
-			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			response := httptest.NewRecorder()
-
-			handler.ServeHTTP(response, request)
-
-			if response.Code != http.StatusBadRequest {
-				t.Fatalf("want status %d, got %d: %s", http.StatusBadRequest, response.Code, response.Body.String())
+			for _, want := range []string{"The parameters are not valid — nothing ran.", ">RETURN $language</textarea>", html.EscapeString(parameters) + "</textarea>"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("missing %q", want)
+				}
 			}
-			if len(catalog.queries) != 0 {
-				t.Fatalf("invalid parameters were saved: %#v", catalog.queries)
+			if strings.Contains(body, `action="/save"`) {
+				t.Fatal("rejected run offered saving")
 			}
 		})
 	}
@@ -361,7 +387,7 @@ func TestAskShowsPartialResultsAlongsideExecutionError(t *testing.T) {
 		},
 		err: errors.New("query timed out"),
 	}
-	handler := NewHTTPHandler(NewService(
+	handler := newTestHandler(NewService(
 		testGenerator{query: GeneratedQuery{Cypher: "MATCH (n) RETURN n.name AS name"}},
 		executor,
 		&testCatalog{},
@@ -403,7 +429,7 @@ func TestHomeShowsSchemaFreshnessAndDisablesGenerationWithoutCache(t *testing.T)
 			[]string{"Could not load schema status", "disabled", "Saved queries"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			handler := NewHTTPHandler(
+			handler := newTestHandler(
 				NewService(testGenerator{}, &testExecutor{}, &testCatalog{}), nil,
 				testSchemaStatus{status: test.status, err: test.err},
 			)
@@ -434,14 +460,14 @@ func TestWorkspaceAccessAndCrossOriginProtection(t *testing.T) {
 		status int
 	}{
 		{"get without application credentials", http.MethodGet, "/", "", http.StatusOK},
-		{"same-origin post", http.MethodPost, "/save", "https://workspace.example", http.StatusOK},
-		{"cross-origin post", http.MethodPost, "/save", "https://other.example", http.StatusForbidden},
+		{"same-origin post", http.MethodPost, "/run", "https://workspace.example", http.StatusOK},
+		{"cross-origin post", http.MethodPost, "/run", "https://other.example", http.StatusForbidden},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			catalog := &testCatalog{}
-			handler := NewHTTPHandler(NewService(testGenerator{}, &testExecutor{}, catalog), nil, nil)
+			executor := &testExecutor{}
+			handler := newTestHandler(NewService(testGenerator{}, executor, &testCatalog{}), nil, nil)
 			request := httptest.NewRequest(test.method, "https://workspace.example"+test.path,
-				strings.NewReader("name=Example&cypher=RETURN+1&parameters=%7B%7D"))
+				strings.NewReader("cypher=RETURN+1"))
 			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			if test.origin != "" {
 				request.Header.Set("Origin", test.origin)
@@ -451,8 +477,8 @@ func TestWorkspaceAccessAndCrossOriginProtection(t *testing.T) {
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d: %s", response.Code, test.status, response.Body.String())
 			}
-			if test.status == http.StatusForbidden && len(catalog.queries) != 0 {
-				t.Fatal("cross-origin request saved a query")
+			if test.status == http.StatusForbidden && executor.query != "" {
+				t.Fatal("cross-origin request ran a query")
 			}
 		})
 	}
@@ -461,25 +487,27 @@ func TestWorkspaceAccessAndCrossOriginProtection(t *testing.T) {
 func TestSaveAndRerunPreserveNumericParameters(t *testing.T) {
 	catalog := &testCatalog{}
 	executor := &testExecutor{}
-	handler := NewHTTPHandler(NewService(testGenerator{}, executor, catalog), nil, nil)
-	form := url.Values{
-		"name": {"Numeric query"}, "cypher": {"RETURN $id LIMIT $limit"},
+	handler := newTestHandler(NewService(testGenerator{}, executor, catalog), nil, nil)
+	response := submitForm(handler, "/run", url.Values{
+		"cypher":     {"RETURN $id LIMIT $limit"},
 		"parameters": {`{"id":9007199254740993,"limit":10,"nested":[{"count":9223372036854775807,"score":0.25}]}`},
-	}
-	request := httptest.NewRequest(http.MethodPost, "/save", strings.NewReader(form.Encode()))
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || len(catalog.queries) != 1 {
-		t.Fatalf("save failed: %d %s", response.Code, response.Body.String())
-	}
-	catalog.query = catalog.queries[0]
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/queries/query-1/run", nil))
+	})
 	want := map[string]any{
 		"id": int64(9007199254740993), "limit": int64(10),
 		"nested": []any{map[string]any{"count": int64(9223372036854775807), "score": float64(0.25)}},
 	}
+	if !reflect.DeepEqual(executor.parameters, want) {
+		t.Fatalf("written run parameters = %#v, want %#v", executor.parameters, want)
+	}
+	form := saveForm(t, response.Body.String())
+	form.Set("name", "Numeric query")
+	response = submitForm(handler, "/save", form)
+	if response.Code != http.StatusOK || len(catalog.queries) != 1 {
+		t.Fatalf("save failed: %d %s", response.Code, response.Body.String())
+	}
+	catalog.query = catalog.queries[0]
+	executor.parameters = nil
+	response = submitForm(handler, "/queries/query-1/run", nil)
 	if response.Code != http.StatusOK || !reflect.DeepEqual(executor.parameters, want) {
 		t.Fatalf("rerun status = %d, parameters = %#v, want %#v", response.Code, executor.parameters, want)
 	}
@@ -502,7 +530,7 @@ func TestResultPagesShowCompleteCatalogue(t *testing.T) {
 				{ID: "second", Name: "Second saved query", Cypher: "RETURN 2"},
 			}
 
-			handler := NewHTTPHandler(NewService(
+			handler := newTestHandler(NewService(
 				testGenerator{query: GeneratedQuery{Cypher: "RETURN 1"}},
 				&testExecutor{err: test.err}, &testCatalog{queries: queries, query: queries[0]},
 			), nil, nil)
@@ -525,10 +553,10 @@ func TestResultPagesShowCompleteCatalogue(t *testing.T) {
 
 func TestWorkspaceLayoutAndCatalogueSearchWithoutJavaScript(t *testing.T) {
 	catalog := &testCatalog{queries: []SavedQuery{
-		{ID: "php", Name: "PHP repos", Category: "Languages", Question: "Find non-archived repositories"},
-		{ID: "owners", Name: "Repository admins", Category: "Ownership"},
+		{ID: "php", Name: "PHP repos", FolderPath: "Languages", Question: "Find non-archived repositories"},
+		{ID: "owners", Name: "Repository admins", FolderPath: "Ownership"},
 	}}
-	handler := NewHTTPHandler(NewService(testGenerator{}, &testExecutor{}, catalog), nil, nil)
+	handler := newTestHandler(NewService(testGenerator{}, &testExecutor{}, catalog), nil, nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/?q=non-ARCHIVED", nil))
 	body := response.Body.String()
@@ -588,7 +616,7 @@ func TestInvestigationEvidenceStates(t *testing.T) {
 			}
 			catalog := &testCatalog{query: SavedQuery{ID: "php", Name: "PHP repos", Question: "Which non-archived repositories use PHP?", Cypher: "RETURN $language AS language", Parameters: map[string]any{"language": "PHP"}}}
 			executor := &testExecutor{result: test.result, err: test.executeErr}
-			handler := NewHTTPHandler(NewService(testGenerator{query: generated, err: test.generateErr}, executor, catalog), nil, nil)
+			handler := newTestHandler(NewService(testGenerator{query: generated, err: test.generateErr}, executor, catalog), nil, nil)
 			path := "/ask"
 			if test.saved {
 				path = "/queries/php/run"

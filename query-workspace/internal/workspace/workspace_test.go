@@ -9,15 +9,17 @@ import (
 func TestSavePreservesOriginalQuestion(t *testing.T) {
 	catalog := &testCatalog{}
 	service := NewService(testGenerator{}, &testExecutor{}, catalog)
-	saved, err := service.Save(context.Background(), " PHP repos ", " Languages ",
-		" Which non-archived repositories use PHP? ", "RETURN $language", map[string]any{"language": "PHP"})
+	saved, err := service.Save(context.Background(), " PHP repos ", " Team › Languages ", Investigation{
+		Question: " Which non-archived repositories use PHP? ", Kind: KindQuestion,
+		Query: GeneratedQuery{Cypher: "RETURN $language", Parameters: map[string]any{"language": "PHP"}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.Question != "Which non-archived repositories use PHP?" || saved.Name != "PHP repos" || saved.Category != "Languages" {
+	if saved.Question != "Which non-archived repositories use PHP?" || saved.Name != "PHP repos" || saved.FolderPath != "Team > Languages" || saved.Kind != KindQuestion {
 		t.Fatalf("saved query lost its question or trimming: %#v", saved)
 	}
-	if _, err := service.Save(context.Background(), "Too long", "", strings.Repeat("x", 4001), "RETURN 1", nil); err == nil {
+	if _, err := service.Save(context.Background(), "Too long", "", Investigation{Question: strings.Repeat("x", 4001), Query: GeneratedQuery{Cypher: "RETURN 1"}}); err == nil {
 		t.Fatal("oversized question was saved")
 	}
 }
@@ -57,7 +59,7 @@ func TestQueryPolicyAllowsParameterNamesWithoutAllowingClauses(t *testing.T) {
 	} {
 		t.Run(test.cypher, func(t *testing.T) {
 			service := NewService(testGenerator{}, &testExecutor{}, &testCatalog{})
-			_, err := service.Save(context.Background(), "Example", "", "", test.cypher, nil)
+			_, err := service.Save(context.Background(), "Example", "", Investigation{Kind: KindCypher, Query: GeneratedQuery{Cypher: test.cypher}})
 			if (err == nil) != test.valid {
 				t.Fatalf("Save error = %v, want valid = %v", err, test.valid)
 			}

@@ -7,7 +7,7 @@ import (
 )
 
 func TestStaticRouteOnlyServesPublicAssets(t *testing.T) {
-	handler := NewHTTPHandler(NewService(testGenerator{}, &testExecutor{}, &testCatalog{}), nil, nil)
+	handler := newTestHandler(NewService(testGenerator{}, &testExecutor{}, &testCatalog{}), nil, nil)
 	for _, test := range []struct {
 		path string
 		want int
@@ -19,6 +19,7 @@ func TestStaticRouteOnlyServesPublicAssets(t *testing.T) {
 		{"/static/plex-mono-500.ttf", http.StatusOK},
 		{"/static/OFL-plex-sans.txt", http.StatusOK},
 		{"/static/OFL-plex-mono.txt", http.StatusOK},
+		{"/static/cytoscape.min.js", http.StatusOK},
 		{"/static/%2e%2e/templates/workspace.html", http.StatusNotFound},
 	} {
 		response := httptest.NewRecorder()

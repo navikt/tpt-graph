@@ -31,13 +31,17 @@ func (r queryRow) Scan(dest ...any) error {
 	return nil
 }
 
-func TestScanSavedQuestionIncludingLegacyRows(t *testing.T) {
-	for _, question := range []string{"Which repositories use PHP?", ""} {
-		query, err := scanQuery(queryRow{"id", "PHP repos", "Languages", question, "RETURN $language", []byte(`{"language":"PHP"}`), time.Now()})
+func TestScanSavedQueryFolderAndKind(t *testing.T) {
+	for _, test := range []struct {
+		kind     workspace.QueryKind
+		question string
+	}{{workspace.KindQuestion, "Which repositories use PHP?"}, {workspace.KindCypher, ""}} {
+		query, err := scanQuery(queryRow{"id", "PHP repos", "Team > Languages", test.kind, test.question, "RETURN $language", []byte(`{"language":"PHP"}`), time.Now()})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if query.Question != question || query.Cypher != "RETURN $language" || query.Parameters["language"] != "PHP" {
+		if query.FolderPath != "Team > Languages" || query.Kind != test.kind || query.Question != test.question ||
+			query.Cypher != "RETURN $language" || query.Parameters["language"] != "PHP" {
 			t.Fatalf("loaded query = %#v", query)
 		}
 	}
@@ -96,10 +100,11 @@ func TestPostgresCatalogIntegration(t *testing.T) {
 	defer store.Close()
 
 	saved, err := store.Save(ctx, workspace.SavedQuery{
-		Name:     "integration test",
-		Category: "Draft",
-		Question: "Which repositories use PHP?",
-		Cypher:   "RETURN $name AS name",
+		Name:       "integration test",
+		FolderPath: "Team > Drafts",
+		Kind:       workspace.KindQuestion,
+		Question:   "Which repositories use PHP?",
+		Cypher:     "RETURN $name AS name",
 		Parameters: map[string]any{
 			"name": "workspace-test", "limit": int64(10), "id": int64(9007199254740993),
 			"nested": []any{map[string]any{"count": int64(9223372036854775807), "score": float64(0.25)}},
@@ -116,7 +121,8 @@ func TestPostgresCatalogIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Cypher != saved.Cypher || loaded.Question != saved.Question || !reflect.DeepEqual(loaded.Parameters, saved.Parameters) {
+	if loaded.Cypher != saved.Cypher || loaded.Question != saved.Question || loaded.FolderPath != saved.FolderPath ||
+		loaded.Kind != saved.Kind || !reflect.DeepEqual(loaded.Parameters, saved.Parameters) {
 		t.Fatalf("loaded query = %#v", loaded)
 	}
 	queries, err := store.List(ctx)
