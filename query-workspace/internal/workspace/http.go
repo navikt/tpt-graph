@@ -300,7 +300,11 @@ func (h *HTTPHandler) logRunError(r *http.Request, message string, err error) {
 		return
 	}
 	observability.RecordError(r.Context(), err)
-	h.logger.ErrorContext(r.Context(), message, "error", err)
+
+	sanitizedError := strings.ReplaceAll(err.Error(), "\n", "")
+	sanitizedError = strings.ReplaceAll(sanitizedError, "\r", "")
+
+	h.logger.ErrorContext(r.Context(), message, "error", sanitizedError)
 }
 
 // editableParameters formats parameters for the Write Cypher parameter field; none gives an empty field.
