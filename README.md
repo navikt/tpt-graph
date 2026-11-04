@@ -44,6 +44,8 @@ metadata is refreshed daily at midnight Europe/Oslo and cached in PostgreSQL.
 Startup captures missing or overdue metadata; generation uses the latest
 successful snapshot and the UI shows its age. Saved queries can still be
 listed and rerun if Vertex AI generation or schema discovery is unavailable.
+Hand-written read-only Cypher can be run directly, and node and relationship
+results can be drawn as a graph.
 
 The companion's Nais manifest and deployment workflow are
 `.nais/query-workspace.yaml` and `.github/workflows/query-workspace.yaml`.

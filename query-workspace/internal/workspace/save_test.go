@@ -47,37 +47,37 @@ func submitForm(handler http.Handler, path string, values url.Values) *httptest.
 }
 
 func TestSaveFeedbackPreservesInvestigationWithoutRerunning(t *testing.T) {
-	catalog := &testCatalog{}
+	catalog := &testCatalog{queries: []SavedQuery{{ID: "existing", Name: "Existing", FolderPath: "Team > Languages"}}}
 	executor := &testExecutor{
 		result: QueryResult{Columns: []string{"repository"}, Rows: [][]string{{"navikt/erfaringsforum"}}},
 		err:    errors.New("TransactionTimedOut"),
 	}
-	handler := NewHTTPHandler(NewService(testGenerator{query: GeneratedQuery{
+	handler := newTestHandler(NewService(testGenerator{query: GeneratedQuery{
 		Cypher: "RETURN $language AS language", Parameters: map[string]any{"language": "PHP"},
 	}}, executor, catalog), nil, nil)
 	response := submitForm(handler, "/ask", url.Values{"question": {"Which non-archived repositories use PHP?"}})
 	form := saveForm(t, response.Body.String())
 	form.Set("name", "   ")
-	form.Set("category", " Languages ")
+	form.Set("folder", " Languages ")
 	executor.query = ""
 	response = submitForm(handler, "/save", form)
 	body := response.Body.String()
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid save status = %d", response.Code)
 	}
-	for _, want := range []string{"Name is required to save the query.", `aria-invalid="true"`, `value=" Languages "`, "Which non-archived repositories use PHP?", "navikt/erfaringsforum", "TransactionTimedOut", "1 partial rows"} {
+	for _, want := range []string{"Name is required to save the query.", `aria-invalid="true"`, `<option value="Team">`, `<option value="Team &gt; Languages">`, `value=" Languages "`, "Which non-archived repositories use PHP?", "navikt/erfaringsforum", "TransactionTimedOut", "1 partial rows"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("invalid save lost %q", want)
 		}
 	}
-	if len(catalog.queries) != 0 || executor.query != "" {
+	if len(catalog.queries) != 1 || executor.query != "" {
 		t.Fatal("invalid save stored or executed a query")
 	}
 	form = saveForm(t, body)
 	form.Set("name", " PHP repos ")
 	response = submitForm(handler, "/save", form)
 	body = response.Body.String()
-	if response.Code != http.StatusOK || len(catalog.queries) != 1 {
+	if response.Code != http.StatusOK || len(catalog.queries) != 2 {
 		t.Fatalf("valid save failed: %d; stored %d queries", response.Code, len(catalog.queries))
 	}
 	for _, want := range []string{"✓ Saved", "PHP repos", "Languages", "navikt/erfaringsforum", "1 partial rows"} {
@@ -85,25 +85,24 @@ func TestSaveFeedbackPreservesInvestigationWithoutRerunning(t *testing.T) {
 			t.Errorf("save confirmation lost %q", want)
 		}
 	}
-	saved := catalog.queries[0]
-	if saved.Name != "PHP repos" || saved.Category != "Languages" || saved.Question != "Which non-archived repositories use PHP?" || executor.query != "" {
+	saved := catalog.queries[1]
+	if saved.Name != "PHP repos" || saved.FolderPath != "Languages" || saved.Question != "Which non-archived repositories use PHP?" || executor.query != "" {
 		t.Fatalf("save changed or reran the investigation: %#v, executed %q", saved, executor.query)
 	}
 }
 
-func TestSaveRejectsTamperedInvestigationContext(t *testing.T) {
+func TestSaveRejectsRunThatIsNoLongerCurrent(t *testing.T) {
 	catalog := &testCatalog{}
-	handler := NewHTTPHandler(NewService(testGenerator{query: GeneratedQuery{Cypher: "RETURN 1"}}, &testExecutor{}, catalog), nil, nil)
+	handler := newTestHandler(NewService(testGenerator{query: GeneratedQuery{Cypher: "RETURN 1"}}, &testExecutor{}, catalog), nil, nil)
 	response := submitForm(handler, "/ask", url.Values{"question": {"Find repositories"}})
 	form := saveForm(t, response.Body.String())
-	context := form.Get("context")
-	if context == "" {
-		t.Fatal("save form has no protected investigation context")
+	if form.Get("run") == "" {
+		t.Fatal("save form does not identify the run")
 	}
-	form.Set("context", "x"+context)
-	form.Set("name", "Tampered")
+	submitForm(handler, "/ask", url.Values{"question": {"Find something else"}})
+	form.Set("name", "Outdated")
 	response = submitForm(handler, "/save", form)
 	if response.Code != http.StatusBadRequest || len(catalog.queries) != 0 || !strings.Contains(response.Body.String(), "Run the query again before saving") {
-		t.Fatal("tampered context was not rejected explicitly")
+		t.Fatal("save of a replaced run was not rejected explicitly")
 	}
 }

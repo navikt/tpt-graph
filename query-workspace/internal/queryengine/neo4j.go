@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	neodriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"tpt-graph/query-workspace/internal/observability"
@@ -139,6 +141,8 @@ type rowCollector struct {
 	maxBytes  int
 	bytesUsed int
 	truncated bool
+	graph     workspace.ResultGraph
+	seen      map[string]bool
 }
 
 func newRowCollector(columns []string, maxRows, maxBytes int) *rowCollector {
@@ -147,38 +151,170 @@ func newRowCollector(columns []string, maxRows, maxBytes int) *rowCollector {
 		rows:     make([][]string, 0, min(maxRows, 32)),
 		maxRows:  maxRows,
 		maxBytes: maxBytes,
+		seen:     make(map[string]bool),
 	}
 }
 
+// add keeps a row and the graph entities it introduces only if both fit the output budget,
+// so truncation never leaves graph entities without the row that returned them.
 func (c *rowCollector) add(values []any) bool {
 	if len(c.rows) >= c.maxRows {
 		c.truncated = true
 		return false
 	}
+	entities := rowEntities{seen: c.seen, pending: make(map[string]bool)}
 	row := make([]string, len(values))
 	for i, value := range values {
-		row[i] = displayValue(value)
+		row[i] = entities.cell(value)
 	}
-	encoded, err := json.Marshal(row)
-	if err != nil {
+	size, err := encodedSize(row)
+	if err == nil && (len(entities.nodes) > 0 || len(entities.relationships) > 0) {
+		var graphSize int
+		graphSize, err = encodedSize(entities.nodes, entities.relationships, entities.rowNodes)
+		size += graphSize
+	}
+	if err != nil || c.bytesUsed+size > c.maxBytes {
 		c.truncated = true
 		return false
 	}
-	if c.bytesUsed+len(encoded) > c.maxBytes {
-		c.truncated = true
-		return false
-	}
-	c.bytesUsed += len(encoded)
+	c.bytesUsed += size
 	c.rows = append(c.rows, row)
+	c.graph.Nodes = append(c.graph.Nodes, entities.nodes...)
+	c.graph.Relationships = append(c.graph.Relationships, entities.relationships...)
+	c.graph.RowNodes = append(c.graph.RowNodes, entities.rowNodes)
+	for id := range entities.pending {
+		c.seen[id] = true
+	}
 	return true
 }
 
+func encodedSize(values ...any) (int, error) {
+	size := 0
+	for _, value := range values {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return 0, err
+		}
+		size += len(encoded)
+	}
+	return size, nil
+}
+
 func (c *rowCollector) result() workspace.QueryResult {
-	return workspace.QueryResult{
+	result := workspace.QueryResult{
 		Columns:   c.columns,
 		Rows:      c.rows,
 		Truncated: c.truncated,
 	}
+	if len(c.graph.Nodes) > 0 || len(c.graph.Relationships) > 0 {
+		result.Graph = c.graph
+	}
+	return result
+}
+
+// rowEntities collects the graph entities in one row that have not been collected before.
+type rowEntities struct {
+	seen, pending map[string]bool
+	nodes         []workspace.GraphNode
+	relationships []workspace.GraphRelationship
+	rowNodes      []string
+}
+
+func (e *rowEntities) cell(value any) string {
+	switch value := value.(type) {
+	case nil:
+		return ""
+	case string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return fmt.Sprint(value)
+	case dbtype.Node, dbtype.Relationship, dbtype.Path:
+		return e.display(value).(string)
+	}
+	return marshalDisplay(e.display(value))
+}
+
+// display records graph entities in value and replaces them with readable text.
+func (e *rowEntities) display(value any) any {
+	switch value := value.(type) {
+	case dbtype.Node:
+		e.node(value)
+		return nodeDisplay(value)
+	case dbtype.Relationship:
+		e.relationship(value)
+		return "[:" + value.Type + "]"
+	case dbtype.Path:
+		var text strings.Builder
+		for i, node := range value.Nodes {
+			e.node(node)
+			if i > 0 {
+				relationship := value.Relationships[i-1]
+				e.relationship(relationship)
+				if relationship.StartElementId == node.ElementId {
+					text.WriteString(" <-[:" + relationship.Type + "]- ")
+				} else {
+					text.WriteString(" -[:" + relationship.Type + "]-> ")
+				}
+			}
+			text.WriteString(nodeDisplay(node))
+		}
+		return text.String()
+	case []any:
+		items := make([]any, len(value))
+		for i, item := range value {
+			items[i] = e.display(item)
+		}
+		return items
+	case map[string]any:
+		items := make(map[string]any, len(value))
+		for key, item := range value {
+			items[key] = e.display(item)
+		}
+		return items
+	}
+	return value
+}
+
+func (e *rowEntities) node(node dbtype.Node) {
+	e.rowNodes = append(e.rowNodes, node.ElementId)
+	if e.claim(node.ElementId) {
+		e.nodes = append(e.nodes, workspace.GraphNode{
+			ID: node.ElementId, Labels: node.Labels, Properties: displayProperties(node.Props),
+		})
+	}
+}
+
+func (e *rowEntities) relationship(relationship dbtype.Relationship) {
+	if e.claim(relationship.ElementId) {
+		e.relationships = append(e.relationships, workspace.GraphRelationship{
+			ID: relationship.ElementId, Type: relationship.Type,
+			StartID: relationship.StartElementId, EndID: relationship.EndElementId,
+			Properties: displayProperties(relationship.Props),
+		})
+	}
+}
+
+func (e *rowEntities) claim(id string) bool {
+	if e.seen[id] || e.pending[id] {
+		return false
+	}
+	e.pending[id] = true
+	return true
+}
+
+func displayProperties(properties map[string]any) map[string]string {
+	displayed := make(map[string]string, len(properties))
+	for key, value := range properties {
+		displayed[key] = displayValue(value)
+	}
+	return displayed
+}
+
+// nodeDisplay renders a node as "(:Label) name", preferring the most human-readable property.
+func nodeDisplay(node dbtype.Node) string {
+	label := ""
+	if len(node.Labels) > 0 {
+		label = ":" + node.Labels[0]
+	}
+	return "(" + label + ") " + workspace.NodeCaption(node.ElementId, displayProperties(node.Props))
 }
 
 func displayValue(value any) string {
@@ -189,6 +325,10 @@ func displayValue(value any) string {
 	case string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
 		return fmt.Sprint(value)
 	}
+	return marshalDisplay(value)
+}
+
+func marshalDisplay(value any) string {
 	encoded, err := json.Marshal(value)
 	if err == nil {
 		return string(encoded)

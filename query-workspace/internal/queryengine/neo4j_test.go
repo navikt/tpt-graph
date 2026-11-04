@@ -5,15 +5,18 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	neodriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"tpt-graph/query-workspace/internal/queryparams"
+	"tpt-graph/query-workspace/internal/workspace"
 )
 
 func TestRowCollectorEnforcesRowAndByteLimits(t *testing.T) {
@@ -38,6 +41,62 @@ func TestRowCollectorEnforcesRowAndByteLimits(t *testing.T) {
 	}
 	if !collector.truncated || len(collector.result().Rows) != 0 {
 		t.Fatal("byte limit should mark truncated without storing oversized row")
+	}
+}
+
+func TestRowCollectorExtractsDistinctGraphEntities(t *testing.T) {
+	repo := dbtype.Node{ElementId: "n1", Labels: []string{"GitHubRepository"}, Props: map[string]any{"name": "tpt-graph", "archived": false}}
+	language := dbtype.Node{ElementId: "n2", Labels: []string{"ProgrammingLanguage"}, Props: map[string]any{"id": "Go"}}
+	unnamed := dbtype.Node{ElementId: "n3", Labels: []string{"Thing"}}
+	uses := dbtype.Relationship{ElementId: "r1", Type: "LANGUAGE", StartElementId: "n1", EndElementId: "n2", Props: map[string]any{"size": int64(3)}}
+	collector := newRowCollector([]string{"r", "p", "nested"}, 10, 1<<20)
+
+	collector.add([]any{repo, dbtype.Path{Nodes: []dbtype.Node{repo, language}, Relationships: []dbtype.Relationship{uses}}, nil})
+	collector.add([]any{language, uses, map[string]any{"items": []any{unnamed, "plain"}}})
+	result := collector.result()
+
+	wantRows := [][]string{
+		{"(:GitHubRepository) tpt-graph", "(:GitHubRepository) tpt-graph -[:LANGUAGE]-> (:ProgrammingLanguage) Go", ""},
+		{"(:ProgrammingLanguage) Go", "[:LANGUAGE]", `{"items":["(:Thing) n3","plain"]}`},
+	}
+	if !reflect.DeepEqual(result.Rows, wantRows) {
+		t.Fatalf("rows = %#v, want %#v", result.Rows, wantRows)
+	}
+	wantNodes := []workspace.GraphNode{
+		{ID: "n1", Labels: []string{"GitHubRepository"}, Properties: map[string]string{"name": "tpt-graph", "archived": "false"}},
+		{ID: "n2", Labels: []string{"ProgrammingLanguage"}, Properties: map[string]string{"id": "Go"}},
+		{ID: "n3", Labels: []string{"Thing"}, Properties: map[string]string{}},
+	}
+	wantRelationships := []workspace.GraphRelationship{
+		{ID: "r1", Type: "LANGUAGE", StartID: "n1", EndID: "n2", Properties: map[string]string{"size": "3"}},
+	}
+	if !reflect.DeepEqual(result.Graph.Nodes, wantNodes) || !reflect.DeepEqual(result.Graph.Relationships, wantRelationships) {
+		t.Fatalf("graph = %#v", result.Graph)
+	}
+	if want := [][]string{{"n1", "n1", "n2"}, {"n2", "n3"}}; !reflect.DeepEqual(result.Graph.RowNodes, want) {
+		t.Fatalf("row nodes = %#v, want %#v", result.Graph.RowNodes, want)
+	}
+}
+
+func TestRowCollectorCountsGraphEntitiesAgainstOutputBudget(t *testing.T) {
+	small := dbtype.Node{ElementId: "n1", Labels: []string{"A"}}
+	large := dbtype.Node{ElementId: "n2", Labels: []string{"A"}, Props: map[string]any{"blob": strings.Repeat("x", 400)}}
+	collector := newRowCollector([]string{"n"}, 10, 300)
+
+	if !collector.add([]any{small}) || collector.add([]any{large}) {
+		t.Fatal("budget must admit the small node and reject the large one")
+	}
+	result := collector.result()
+	if !result.Truncated || len(result.Rows) != 1 || len(result.Graph.Nodes) != 1 || len(result.Graph.RowNodes) != 1 {
+		t.Fatalf("rejected row leaked graph entities: %#v", result)
+	}
+}
+
+func TestRowCollectorOmitsGraphForScalarResults(t *testing.T) {
+	collector := newRowCollector([]string{"value"}, 10, 1<<20)
+	collector.add([]any{"scalar"})
+	if graph := collector.result().Graph; graph.Nodes != nil || graph.Relationships != nil || graph.RowNodes != nil {
+		t.Fatalf("scalar result has graph data: %#v", graph)
 	}
 }
 

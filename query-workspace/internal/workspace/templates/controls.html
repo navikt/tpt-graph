@@ -18,51 +18,92 @@
 {{end}}
 
 {{define "catalogue"}}
-<aside aria-labelledby="saved-title" class="sidebar">
-  <div class="section-heading"><h2 id="saved-title">Saved queries</h2><span>{{if .CatalogError}}—{{else}}{{.CatalogueCount}}{{end}}</span></div>
+<form method="post" action="/sidebar" class="sidebar-collapsed" data-sidebar-toggle>
+  <input type="hidden" name="open" value="true"><input type="hidden" name="mode" value="{{.Mode}}">
+  <button type="submit" aria-expanded="false" aria-controls="sidebar" aria-label="Show saved queries"><span aria-hidden="true">»</span><span class="vertical">Saved queries · {{if .CatalogError}}—{{else}}{{.CatalogueCount}}{{end}}</span></button>
+</form>
+<aside aria-labelledby="saved-title" class="sidebar" id="sidebar">
+  <div class="section-heading sidebar-heading">
+    <h2 id="saved-title">Saved queries</h2><span>{{if .CatalogError}}—{{else}}{{.CatalogueCount}}{{end}}</span>
+    {{if .Catalogue.Folders}}<button type="button" id="toggle-folders" class="link-button js-only" hidden>Collapse all</button>{{end}}
+    <form method="post" action="/sidebar" data-sidebar-toggle>
+      <input type="hidden" name="open" value="false"><input type="hidden" name="mode" value="{{.Mode}}">
+      <button type="submit" class="sidebar-hide" aria-expanded="true" aria-controls="sidebar" aria-label="Hide saved queries"><span aria-hidden="true">«</span></button>
+    </form>
+  </div>
   {{if .CatalogError}}
     <div class="notice err catalogue-error" role="alert"><strong>✕ Couldn't load saved queries</strong>
       <p>{{.CatalogError}} This is not the same as having none.</p>
-      <p>You can still ask a new question. Saving is unavailable until the catalogue loads.</p><a class="button" href="/">Retry</a>
+      <p>You can still run new queries. Saving is unavailable until the catalogue loads.</p><a class="button" href="/?mode={{.Mode}}">Retry</a>
     </div>
-  {{else if .Queries}}
+  {{else if .Catalogue.Folders}}
     <form method="get" action="/" class="search-form">
       <label for="catalogue-search">Find a saved query</label>
-      <input id="catalogue-search" type="search" name="q" value="{{.Search}}" placeholder="Name or category">
+      <input type="hidden" name="mode" value="{{.Mode}}">
+      <input id="catalogue-search" type="search" name="q" value="{{.Search}}" placeholder="Name, folder or question">
       <button type="submit" class="search-submit">Search</button>
     </form>
-    <div id="catalogue-groups">
-      {{range .Groups}}
-        <section class="catalogue-group" {{if .Hidden}}hidden{{end}}>
-          <h3>{{.Name}}</h3><ul>
-          {{range .Items}}
-            <li class="catalogue-item" data-search="{{.Name}} {{.Category}} {{.Question}}" {{if .Hidden}}hidden{{end}}>
-              <div><strong>{{.Name}}</strong>{{if .Question}}<span title="{{.Question}}">{{.Question}}</span>{{end}}</div>
-              <form method="post" action="/queries/{{.ID}}/run" data-run="saved"><button type="submit" aria-label="Run saved query {{.Name}}">Run</button></form>
-            </li>
-          {{end}}
-          </ul>
-        </section>
-      {{end}}
-    </div>
+    <div id="catalogue-tree">{{range .Catalogue.Folders}}{{template "folder" .}}{{end}}</div>
     <p id="no-matches" role="status" {{if not .NoSearchMatch}}hidden{{end}}>No saved query matches <span id="search-term">"{{.Search}}"</span>.</p>
-    <p class="catalogue-note">Saved queries store the question, Cypher and parameters — never results. Run executes the stored query against the current graph, without regenerating. Older queries may have no stored question.</p>
+    <p class="catalogue-note">Saved queries store the question or Cypher, and the parameters — never results. Run executes the stored query against the current graph, without regenerating.</p>
   {{else}}
     <div class="empty"><strong>No saved queries yet.</strong><p>After a run, name and save the query to repeat the investigation later against the current graph. Results are not saved.</p></div>
   {{end}}
 </aside>
 {{end}}
 
-{{define "question"}}
-<form method="post" action="/ask" class="question-form" data-run="generated">
-  <label for="question">Investigation question</label>
-  <div class="composer">
-    <textarea id="question" name="question" required maxlength="4000" rows="3" placeholder="e.g. Which non-archived repositories use PHP?">{{.Question}}</textarea>
-    <div class="composer-footer">
-      <span>Generates Cypher, validates it, then executes immediately. There is no review step before execution.</span>
-      <div><kbd class="js-only" hidden>⌘ / Ctrl ↵</kbd><button type="submit" class="primary" {{if .Schema}}{{if not .Schema.Available}}disabled aria-describedby="generation-note"{{end}}{{end}}>Generate and run</button></div>
+{{define "folder"}}
+<details class="folder" open data-path="{{.Path}}" style="--depth:{{.Depth}}" {{if .Hidden}}hidden{{end}}>
+  <summary><span class="chevron" aria-hidden="true"></span><span class="folder-name">{{.Name}}</span><span class="folder-count">{{.Count}}</span></summary>
+  {{if .Queries}}<ul>
+  {{range .Queries}}
+    <li class="catalogue-item" style="--depth:{{.Depth}}" data-search="{{.Name}} {{.FolderPath}} {{.Question}}" {{if .Hidden}}hidden{{end}}>
+      <span class="query-name" title="{{if .Question}}{{.Question}}{{else}}{{.Name}}{{end}}">{{.Name}}</span>
+      {{if eq .Kind "cypher"}}<span class="cy-tag" title="Saved Cypher">cy</span>{{end}}
+      <form method="post" action="/queries/{{.ID}}/run" data-run="saved"><button type="submit" aria-label="Run saved query {{.Name}}">Run</button></form>
+    </li>
+  {{end}}
+  </ul>{{end}}
+  {{range .Folders}}{{template "folder" .}}{{end}}
+</details>
+{{end}}
+
+{{define "composer"}}
+<form method="post" action="{{if eq .Mode "cypher"}}/run{{else}}/ask{{end}}" class="question-form" id="composer" data-run="{{if eq .Mode "cypher"}}written{{else}}generated{{end}}" data-last-input="{{.LastInput}}" data-last-params="{{.LastParams}}">
+  <input type="hidden" name="from" value="{{.Mode}}">
+  <div class="input-label-row">
+    <label for="{{if eq .Mode "cypher"}}cypher{{else}}question{{end}}">{{if eq .Mode "cypher"}}Cypher query{{else}}Investigation question{{end}}</label>
+    <div class="segmented" role="group" aria-label="Input mode">
+      {{if eq .Mode "cypher"}}
+        <button type="submit" formaction="/mode" formnovalidate name="mode" value="ask" aria-pressed="false">Ask a question</button>
+        <button type="button" aria-pressed="true">Write Cypher</button>
+      {{else}}
+        <button type="button" aria-pressed="true">Ask a question</button>
+        <button type="submit" formaction="/mode" formnovalidate name="mode" value="cypher" aria-pressed="false">Write Cypher</button>
+      {{end}}
     </div>
   </div>
-  {{if .Schema}}{{if not .Schema.Available}}<span id="generation-note" class="err-ink">Unavailable: schema metadata missing.</span>{{end}}{{end}}
+  <div class="composer">
+    {{if eq .Mode "cypher"}}
+      <textarea id="cypher" name="cypher" class="cypher-input" required maxlength="100000" rows="7" spellcheck="false" placeholder="MATCH (r:GitHubRepository)-[:LANGUAGE]->(l:ProgrammingLanguage {name: $language}) RETURN r, l LIMIT 25">{{.CypherInput}}</textarea>
+      <details class="parameters-field" {{if .ParamsInput}}open{{end}}>
+        <summary><span aria-hidden="true">▸</span> Parameters (optional — or type values straight into the query)</summary>
+        <label for="parameters">JSON, referenced as <code>$name</code></label>
+        <textarea id="parameters" name="parameters" rows="3" spellcheck="false" placeholder='{ "language": "PHP" }'>{{.ParamsInput}}</textarea>
+      </details>
+    {{else}}
+      <textarea id="question" name="question" required maxlength="4000" rows="3" placeholder="e.g. Which non-archived repositories use PHP?">{{.Question}}</textarea>
+    {{end}}
+    <div class="composer-footer">
+      {{if eq .Mode "cypher"}}
+        <span>Runs as written, after the same validation and read restrictions as generated queries. Doesn't need schema metadata.</span>
+        <div><kbd class="js-only" hidden>⌘ / Ctrl ↵</kbd><button type="submit" class="primary">Validate and run</button></div>
+      {{else}}
+        <span>Generates Cypher, validates it, then executes immediately. There is no review step before execution.</span>
+        <div><kbd class="js-only" hidden>⌘ / Ctrl ↵</kbd><button type="submit" class="primary" {{if .Schema}}{{if not .Schema.Available}}disabled aria-describedby="generation-note"{{end}}{{end}}>Generate and run</button></div>
+      {{end}}
+    </div>
+  </div>
+  {{if ne .Mode "cypher"}}{{if .Schema}}{{if not .Schema.Available}}<span id="generation-note" class="err-ink">Unavailable: schema metadata missing.</span>{{end}}{{end}}{{end}}
 </form>
 {{end}}
