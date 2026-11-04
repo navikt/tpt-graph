@@ -127,10 +127,10 @@ tbody tr.highlight{background:oklch(.955 .025 250)}
 .node-list ul{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:4px}
 .node-list button{font-size:12px;padding:2px 8px;border-radius:4px}
 .node-list button[aria-pressed=true]{border-color:var(--ink);font-weight:600}
-.graph-details{flex:1 1 230px;min-width:0;padding:12px 14px;background:var(--surface);font-size:13px;display:flex;flex-direction:column;gap:10px}
+.graph-details{flex:1 1 230px;min-width:0;max-height:560px;overflow:auto;padding:12px 14px;background:var(--surface);font-size:13px;display:flex;flex-direction:column;gap:10px}
 .graph-details-title{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.graph-details-title strong{font-weight:600;overflow-wrap:anywhere}
-.graph-properties{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 10px;font:12px/1.5 var(--mono)}
-.graph-properties dt{color:var(--accent-ink)}.graph-properties dd{margin:0;overflow-wrap:anywhere}
+.graph-properties{font:12px/1.5 var(--mono)}
+.graph-properties dt{color:var(--accent-ink);overflow-wrap:anywhere}.graph-properties dd{margin:0 0 6px;overflow-wrap:anywhere}
 .graph-details-heading{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 .graph-relationships{list-style:none;margin:0;padding:0;display:grid;gap:3px;font:12px/1.5 var(--mono);overflow-wrap:anywhere}
 .graph-note{font-size:12px;color:var(--muted)}
