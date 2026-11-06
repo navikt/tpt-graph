@@ -15,7 +15,7 @@ jobs:
       statuses: read
     steps:
       - name: Automerge Dependabot PRs
-        uses: navikt/automerge-dependabot@v1.6.0
+        uses: navikt/automerge-dependabot@v1.7.0
         with:
           token: ${{ github.token }}
           merge-method: squash
