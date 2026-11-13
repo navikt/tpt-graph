@@ -7,9 +7,10 @@ const runningMessages = {
   generated: "Running… Generating, validating and executing can take a while. Step outcomes will appear when the request completes.",
   written: "Running… Validating and executing your Cypher.",
   saved: "Running… Validating and executing the stored query without generating again.",
+  schema: "Exploring cached schema metadata… No database query is being executed.",
 };
 
-composer.querySelectorAll("textarea").forEach(textarea => {
+composer?.querySelectorAll("textarea").forEach(textarea => {
   textarea.addEventListener("keydown", event => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       event.preventDefault();
@@ -37,7 +38,7 @@ document.querySelectorAll("form[data-run]").forEach(form => {
     const running = document.getElementById("running");
     running.hidden = false;
     running.textContent = runningMessages[form.dataset.run];
-    document.getElementById("live-status").textContent = "Running query";
+    document.getElementById("live-status").textContent = form.dataset.run === "schema" ? "Exploring schema metadata" : "Running query";
     document.querySelectorAll("[data-idle-content]").forEach(element => { element.hidden = true; });
     document.querySelectorAll("form[data-run] button").forEach(button => {
       if (!button.disabled) { button.dataset.runDisabled = "true"; button.disabled = true; }
@@ -199,7 +200,8 @@ function drawGraph() {
     const heading = element("p", "graph-details-title");
     const dot = element("span", "dot");
     dot.style.background = node.color;
-    heading.append(dot, element("code", "", node.label), " ", element("strong", "", node.name));
+    heading.append(dot, element("code", "", node.label));
+    if (graphData.dataset.schema !== "true") heading.append(" ", element("strong", "", node.name));
     details.replaceChildren(heading);
     if (node.properties.length) {
       const list = element("dl", "graph-properties");
@@ -207,7 +209,7 @@ function drawGraph() {
       details.append(list);
     }
     const edges = graph.getElementById(node.id).connectedEdges();
-    details.append(element("h3", "graph-details-heading", `In this result · ${edges.length}`));
+    details.append(element("h3", "graph-details-heading", `${graphData.dataset.schema === "true" ? "Inferred in this schema view" : "In this result"} · ${edges.length}`));
     if (edges.length) {
       const list = element("ul", "graph-relationships");
       edges.forEach(edge => {
@@ -247,6 +249,7 @@ function drawGraph() {
 
 // Result view: Table, Graph or Both, remembered for the browser session.
 const resultView = document.getElementById("result-view");
+if (graphData?.dataset.schema === "true" && window.cytoscape) drawGraph();
 if (resultView) {
   const storageKey = "query-workspace:result-view";
   const hasGraph = resultView.dataset.hasGraph === "true";

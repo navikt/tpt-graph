@@ -28,7 +28,7 @@ func TestCypherDisplayFormattingDoesNotChangeExecutedQuery(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			executor := &testExecutor{}
-			handler := NewHTTPHandler(NewService(testGenerator{query: GeneratedQuery{Cypher: test.query}}, executor, &testCatalog{}), nil, nil)
+			handler := NewHTTPHandler(NewService(testGenerator{query: GeneratedQuery{Cypher: test.query}}, executor, &testCatalog{}), nil, nil, nil)
 			form := url.Values{"question": {"Find repositories"}}
 			request := httptest.NewRequest(http.MethodPost, "/ask", strings.NewReader(form.Encode()))
 			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")

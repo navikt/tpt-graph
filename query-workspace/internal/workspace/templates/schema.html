@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Schema chat - Query workspace</title>
+  <link rel="stylesheet" href="/static/workspace.css">
+  {{if .Graph}}{{if .Graph.Drawable}}<script src="/static/cytoscape.min.js" defer></script>{{end}}{{end}}
+  <script src="/static/workspace.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#schema-chat">Skip to schema chat</a>
+  <header class="header">
+    <div class="brand"><h1>Schema chat</h1><span>Private - Cartography schema metadata</span></div>
+    <nav aria-label="Workspace"><a href="/">Query workspace</a> · <a href="/schema" aria-current="page">Schema chat</a></nav>
+    {{template "schema_status" .}}
+  </header>
+  <main id="schema-chat" class="schema-workspace" tabindex="-1">
+    <p class="notice info">Explore labels, property types and inferred relationships with the assistant. It cannot read records or execute queries. Schema metadata does not establish business meaning, completeness or attack paths.</p>
+    {{if .SessionEnded}}<p class="notice info" role="status">Your earlier session ended. Start a new schema conversation; nothing was rerun.</p>{{end}}
+    {{if .SchemaError}}<p class="notice err" role="alert">{{.SchemaError}}</p>{{end}}
+    {{if .Schema}}
+      {{if not .Schema.Available}}<p class="notice err" role="alert">No schema snapshot is available. The assistant needs a successful schema refresh before it can answer.</p>{{end}}
+      {{if .Schema.Stale}}<p class="notice warn" role="status">Schema metadata is {{.Schema.Age}} old. Answers use the last successful snapshot, not the current graph.</p>{{end}}
+      {{if .Schema.RefreshFailed}}<p class="notice warn" role="status">Schema refresh failed. The last successful snapshot, if any, has been retained.</p>{{end}}
+    {{end}}
+    <section class="schema-conversation" aria-labelledby="conversation-title">
+      <div class="section-heading">
+        <h2 id="conversation-title">Explore the schema</h2>
+        {{if .Chat}}<form method="post" action="/schema/reset"><button type="submit">New conversation</button></form>{{end}}
+      </div>
+      {{if not .Chat}}<p class="muted">Try "Do we have information about GitHub branches?" Then ask about properties or how the types connect.</p>{{end}}
+      {{range .Chat}}
+      <article class="schema-turn">
+        <h3>You</h3><p class="chat-text">{{.Question}}</p>
+        <h3>Schema assistant</h3><p class="chat-text">{{.Reply.Text}}</p>
+        <p class="muted">Metadata snapshot: {{.Reply.CapturedAt.Format "2006-01-02 15:04 MST"}}. This is not graph-data freshness.</p>
+      </article>
+      {{end}}
+      <p class="muted">The last 8 exchanges are kept in this browser session. They expire after 60 minutes idle, on restart or when memory is reclaimed. Other browsers do not share this conversation.</p>
+    </section>
+    <form method="post" action="/schema/chat" id="composer" class="question-form" data-run="schema">
+      <label for="schema-question">Ask about the schema</label>
+      <div class="composer">
+        <textarea id="schema-question" name="question" rows="2" required maxlength="4000" aria-describedby="schema-help{{if .Error}} schema-chat-error{{end}}">{{.Draft}}</textarea>
+        <div class="composer-footer">
+          <span id="schema-help">Metadata only. No Cypher or record retrieval. Up to six lookups per answer.</span>
+          <button type="submit" class="primary" {{if .Schema}}{{if not .Schema.Available}}disabled{{end}}{{end}}>Ask schema assistant</button>
+        </div>
+      </div>
+    </form>
+    <p class="sr-only" id="live-status" aria-live="polite"></p>
+    <p class="pending" id="running" role="status" hidden>Exploring schema metadata...</p>
+    {{if .Error}}<p id="schema-chat-error" class="notice err" role="alert">{{.Error}}</p>{{end}}
+    {{with .Evidence}}
+    <section class="schema-evidence" aria-labelledby="evidence-title">
+      <h2 id="evidence-title">Metadata retrieved for the latest answer</h2>
+      <p class="muted">This focused view contains retrieved schema types, not actual nodes. All relationships below are metadata-inferred and have not been verified against actual edges.</p>
+      {{if .Truncated}}<p class="notice warn" role="status">The metadata view is limited to 24 types and 40 relationships. Some metadata was omitted; ask a narrower follow-up. This is not an exhaustive schema.</p>{{end}}
+      {{if not .Nodes}}<p>No matching node types were retrieved from this snapshot. This does not prove that the source system lacks the information.</p>{{end}}
+      {{with $.Graph}}{{template "graph" .}}{{end}}
+      <div class="schema-cards">
+      {{range .Nodes}}
+        <details class="schema-card">
+          <summary><code>{{.Name}}</code> - {{len .Properties}} properties</summary>
+          {{if .PropertiesTruncated}}<p class="notice warn">Only 60 properties are shown; this list is incomplete. Search for a specific property to focus the result.</p>{{end}}
+          <p class="muted">Observed property types. Properties may be optional.</p>
+          <dl class="graph-properties">{{range .Properties}}<dt>{{.Name}}</dt><dd>{{.Type}}</dd>{{else}}<dt>Properties</dt><dd>None observed</dd>{{end}}</dl>
+        </details>
+      {{end}}
+      </div>
+      {{if .Relationships}}
+      <details class="schema-card" open>
+        <summary>Inferred directed relationships - {{len .Relationships}}</summary>
+        <ul class="schema-relationships">
+        {{range .Relationships}}<li><code>{{.Source}} -[:{{.Type}}]-&gt; {{.Target}}</code>
+          {{if .PropertiesTruncated}}<p class="notice warn">Only 60 relationship properties are shown. Search for a specific property to focus the result.</p>{{end}}
+          {{if .Properties}}<dl class="graph-properties">{{range .Properties}}<dt>{{.Name}}</dt><dd>{{.Type}}</dd>{{end}}</dl>{{end}}
+        </li>{{end}}
+        </ul>
+      </details>
+      {{end}}
+    </section>
+    {{end}}
+    <p class="idle-note">Need actual records or want to verify a connection? <a href="/">Open the query workspace</a>. Schema chat does not execute queries.</p>
+  </main>
+</body>
+</html>

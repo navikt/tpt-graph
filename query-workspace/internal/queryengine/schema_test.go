@@ -10,6 +10,7 @@ import (
 	"time"
 
 	neodriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	"tpt-graph/query-workspace/internal/schema"
 )
 
 type metadataResult struct {
@@ -83,6 +84,14 @@ func TestNativeSchemaCapturesPropertiesAndInferredDirections(t *testing.T) {
 	}
 	if !reflect.DeepEqual(queries, []string{nodePropertiesQuery, relationshipPropertiesQuery, visualizationQuery}) {
 		t.Fatalf("discovery queries = %#v", queries)
+	}
+	index, err := schema.NewIndex(text)
+	if err != nil {
+		t.Fatalf("native snapshot is not usable by the schema explorer: %v", err)
+	}
+	evidence, err := index.Inspect("GitHubRepository")
+	if err != nil || len(evidence.Relationships) != 1 || evidence.Relationships[0].Target != "Dependency" {
+		t.Fatalf("schema explorer lost native metadata: %#v, %v", evidence, err)
 	}
 }
 

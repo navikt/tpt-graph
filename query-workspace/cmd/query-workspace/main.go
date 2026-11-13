@@ -97,7 +97,7 @@ func main() {
 	)
 
 	service := workspace.NewServiceWithMetrics(generator, executor, store, latencies)
-	ui := workspace.NewHTTPHandler(service, logger, schemaCache)
+	ui := workspace.NewHTTPHandler(service, logger, schemaCache, generator)
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))

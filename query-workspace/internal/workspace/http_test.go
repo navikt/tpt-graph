@@ -129,7 +129,7 @@ type browser struct {
 }
 
 func newTestHandler(service *Service, logger *slog.Logger, schemas SchemaStatusProvider) *browser {
-	return &browser{handler: NewHTTPHandler(service, logger, schemas), cookies: make(map[string]*http.Cookie)}
+	return &browser{handler: NewHTTPHandler(service, logger, schemas, nil), cookies: make(map[string]*http.Cookie)}
 }
 
 func (b *browser) ServeHTTP(w http.ResponseWriter, r *http.Request) {

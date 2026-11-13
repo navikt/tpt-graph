@@ -73,6 +73,15 @@ summary{cursor:pointer}summary::-webkit-details-marker{display:none}
 main{min-width:0;padding:20px 28px 48px;display:flex;flex-direction:column;gap:22px}
 .run-content{min-width:0;display:flex;flex-direction:column;gap:22px}
 .question-form{display:flex;flex-direction:column;gap:8px}
+.schema-workspace{width:100%;max-width:1280px;margin:0 auto}
+.schema-conversation,.schema-evidence{display:flex;flex-direction:column;gap:14px;min-width:0}
+.schema-turn{padding:14px 16px;border:1px solid var(--border);border-radius:8px;background:var(--surface);display:grid;gap:8px;min-width:0}
+.chat-text{white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
+.schema-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:10px}
+.schema-card{padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);min-width:0;overflow-wrap:anywhere}
+.schema-card>summary{font-weight:500;list-style:revert}
+.schema-card[open]>summary{margin-bottom:10px}
+.schema-relationships{padding-left:20px;display:grid;gap:12px}
 .input-label-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .segmented{display:inline-flex;padding:2px;border:1px solid var(--border-input);border-radius:7px;background:var(--th-bg)}
 .segmented button{font-size:12.5px;font-weight:500;padding:4px 12px;border:0;border-radius:5px;background:transparent}

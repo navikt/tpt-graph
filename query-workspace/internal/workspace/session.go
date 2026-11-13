@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"tpt-graph/query-workspace/internal/schema"
 )
 
 const (
@@ -32,12 +34,14 @@ type modeState struct {
 }
 
 type browserSession struct {
-	id         string
-	lastUsed   time.Time
-	activeMode InputMode
-	modes      map[InputMode]modeState
-	size       int
-	element    *list.Element
+	id          string
+	lastUsed    time.Time
+	activeMode  InputMode
+	modes       map[InputMode]modeState
+	size        int
+	element     *list.Element
+	chat        []schema.Turn
+	chatVersion uint64
 }
 
 // sessionStore keeps per-browser drafts and last runs in memory. Sessions expire after an idle
@@ -58,9 +62,11 @@ func newSessionStore(budget int, ttl time.Duration, now func() time.Time) *sessi
 
 // sessionView is a copy of a session's state, safe to use outside the store lock.
 type sessionView struct {
-	ID         string
-	ActiveMode InputMode
-	Modes      map[InputMode]modeState
+	ID          string
+	ActiveMode  InputMode
+	Modes       map[InputMode]modeState
+	Chat        []schema.Turn
+	ChatVersion uint64
 	// Ended is set when the browser presented a session the server no longer holds.
 	Ended bool
 }
@@ -151,12 +157,28 @@ func (b *browserSession) view() sessionView {
 	for mode, state := range b.modes {
 		modes[mode] = state
 	}
-	return sessionView{ID: b.id, ActiveMode: b.activeMode, Modes: modes}
+	return sessionView{ID: b.id, ActiveMode: b.activeMode, Modes: modes,
+		Chat: append([]schema.Turn(nil), b.chat...), ChatVersion: b.chatVersion}
 }
 
 // measure approximates retained bytes; it only needs to be proportionate for the memory budget.
 func (b *browserSession) measure() int {
 	size := 256
+	for _, turn := range b.chat {
+		size += len(turn.Question) + len(turn.Reply.Text) + 256
+		for _, node := range turn.Reply.Evidence.Nodes {
+			size += len(node.Name) + 64
+			for _, property := range node.Properties {
+				size += len(property.Name) + len(property.Type) + 32
+			}
+		}
+		for _, rel := range turn.Reply.Evidence.Relationships {
+			size += len(rel.Source) + len(rel.Target) + len(rel.Type) + 96
+			for _, property := range rel.Properties {
+				size += len(property.Name) + len(property.Type) + 32
+			}
+		}
+	}
 	for _, state := range b.modes {
 		size += len(state.Draft) + len(state.Parameters)
 		if run := state.Run; run != nil {

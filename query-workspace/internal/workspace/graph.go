@@ -46,6 +46,7 @@ func NodeCaption(elementID string, properties map[string]string) string {
 }
 
 type graphView struct {
+	Schema     bool
 	Drawable   bool
 	Legend     []legendEntry
 	Nodes      []graphNodeView

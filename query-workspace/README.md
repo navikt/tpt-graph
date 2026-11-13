@@ -72,6 +72,35 @@ instant filtering, folder collapse, the result view toggle, the graph and the
 pending state. Keyboard focus is visible; errors are associated with invalid
 fields, and status messages do not rely on colour alone.
 
+## Schema chat
+
+Open **Schema chat** (`GET /schema`) to explore what the cached schema contains.
+The assistant uses the existing Vertex AI configuration, with two bounded tools:
+`search_schema` matches substrings in labels, property names and relationship
+types, and `inspect_node` retrieves an exact label and its directed one-hop
+schema neighbourhood. It receives retrieved metadata rather than the full
+schema. It has no Neo4j query tool and cannot retrieve records or property values.
+
+Each answer requires a successful metadata lookup, even for follow-ups. A turn
+has a 45-second deadline, at most six tool calls and seven model requests.
+Each tool result is limited to 24 types, 40 inferred relationships, 60 properties
+per type and 32 KiB encoded metadata. Truncation is explicit; narrower searches
+can focus the result. The latest answer's retrieved evidence is shown as a
+focused graph, property/type cards and a directed relationship list. The cards
+and relationship list also work without JavaScript.
+
+The assistant must distinguish metadata from business meaning and coverage:
+a branch type does not establish that all branches are ingested, and an inferred
+relationship does not prove that an actual edge exists. Absence means "not found
+in this snapshot", not that the source system lacks the information. Answers
+show the snapshot capture time. Use the query workspace to inspect actual records.
+
+`POST /schema/chat` keeps the last eight exchanges in the existing browser
+session, under the same idle expiry and memory budget as investigation results.
+Chat is not saved in PostgreSQL. `POST /schema/reset` clears the conversation;
+in-flight answers cannot restore a conversation that was reset or overwrite a
+newer answer. Failed turns retain the question for retry without changing history.
+
 ## Runtime configuration
 
 Nais provides `DB_URL` for the PostgreSQL catalogue. The `tpt-query-workspace`

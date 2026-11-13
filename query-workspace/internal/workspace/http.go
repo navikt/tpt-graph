@@ -28,27 +28,29 @@ type SchemaStatusProvider interface {
 const sidebarCookie = "query_workspace_sidebar"
 
 type HTTPHandler struct {
-	service  *Service
-	logger   *slog.Logger
-	template *template.Template
-	schemas  SchemaStatusProvider
-	sessions *sessionStore
+	service   *Service
+	logger    *slog.Logger
+	template  *template.Template
+	schemas   SchemaStatusProvider
+	sessions  *sessionStore
+	assistant SchemaAssistant
 }
 
-func NewHTTPHandler(service *Service, logger *slog.Logger, schemas SchemaStatusProvider) http.Handler {
-	return newHTTPHandler(service, logger, schemas, newSessionStore(sessionMemoryCap, sessionIdleTTL, time.Now))
+func NewHTTPHandler(service *Service, logger *slog.Logger, schemas SchemaStatusProvider, assistant SchemaAssistant) http.Handler {
+	return newHTTPHandler(service, logger, schemas, assistant, newSessionStore(sessionMemoryCap, sessionIdleTTL, time.Now))
 }
 
-func newHTTPHandler(service *Service, logger *slog.Logger, schemas SchemaStatusProvider, sessions *sessionStore) http.Handler {
+func newHTTPHandler(service *Service, logger *slog.Logger, schemas SchemaStatusProvider, assistant SchemaAssistant, sessions *sessionStore) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	handler := &HTTPHandler{
-		service:  service,
-		logger:   logger,
-		template: template.Must(template.New("workspace.html").ParseFS(webFiles, "templates/*.html")),
-		schemas:  schemas,
-		sessions: sessions,
+		service:   service,
+		logger:    logger,
+		template:  template.Must(template.New("workspace.html").ParseFS(webFiles, "templates/*.html")),
+		schemas:   schemas,
+		sessions:  sessions,
+		assistant: assistant,
 	}
 	return http.NewCrossOriginProtection().Handler(observability.HTTPHandler(handler.routes()))
 }
@@ -61,6 +63,9 @@ func (h *HTTPHandler) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticFiles)))
 	mux.HandleFunc("GET /{$}", h.home)
+	mux.HandleFunc("GET /schema", h.schemaHome)
+	mux.HandleFunc("POST /schema/chat", h.schemaChat)
+	mux.HandleFunc("POST /schema/reset", h.schemaReset)
 	mux.HandleFunc("POST /ask", h.ask)
 	mux.HandleFunc("POST /run", h.runWritten)
 	mux.HandleFunc("POST /mode", h.switchMode)

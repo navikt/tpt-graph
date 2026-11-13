@@ -44,22 +44,22 @@
 <section class="graph-section" aria-label="Graph view" data-result-view="graph">
   {{range .Notices}}{{template "notice" .}}{{end}}
   {{if .Drawable}}
-  <noscript><p class="notice info">The graph view needs JavaScript. The table has every row.</p></noscript>
+  <noscript><p class="notice info">The graph view needs JavaScript. {{if .Schema}}The schema cards and relationship list below contain the retrieved metadata.{{else}}The table has every row.{{end}}</p></noscript>
   <div class="graph-panel js-only" hidden>
     <div class="graph-main">
       <ul class="graph-legend" aria-label="Labels in the graph">{{range .Legend}}<li><span class="dot" style="background:{{.Color}}" aria-hidden="true"></span><code>{{.Label}}</code> <span class="muted">{{.Count}}</span></li>{{end}}</ul>
       <div class="graph-canvas-wrap"><div id="graph-canvas" class="graph-canvas" aria-hidden="true"></div></div>
       <details class="node-list">
-        <summary><span aria-hidden="true">▸</span> Nodes in this result · {{len .Nodes}}</summary>
+        <summary><span aria-hidden="true">▸</span> {{if .Schema}}Types in this schema view{{else}}Nodes in this result{{end}} · {{len .Nodes}}</summary>
         <ul>{{range .Nodes}}<li><button type="button" data-node="{{.ID}}"><code>{{.Label}}</code> {{.Name}}</button></li>{{end}}</ul>
       </details>
     </div>
     <aside class="graph-details" aria-label="Selected node" aria-live="polite" id="graph-details">
-      <p class="muted">Select a node to see its properties and the relationships returned with it.</p>
+      <p class="muted">{{if .Schema}}Select a type to see observed property types and metadata-inferred relationships. These are not records or verified edges.{{else}}Select a node to see its properties and the relationships returned with it.{{end}}</p>
     </aside>
   </div>
-  <p class="graph-note js-only" hidden>Shows only the nodes and relationships this query returned — not their full neighbourhood. Position on the canvas carries no meaning. Select a node to inspect it.</p>
-  <script type="application/json" id="graph-data">{{.Payload}}</script>
+  <p class="graph-note js-only" hidden>{{if .Schema}}Shows retrieved schema types and metadata-inferred relationships, not actual nodes or verified edges.{{else}}Shows only the nodes and relationships this query returned — not their full neighbourhood.{{end}} Position on the canvas carries no meaning. Select a node to inspect it.</p>
+  <script type="application/json" id="graph-data" data-schema="{{.Schema}}">{{.Payload}}</script>
   {{end}}
 </section>
 {{end}}

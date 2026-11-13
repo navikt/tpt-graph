@@ -279,7 +279,7 @@ func TestSidebarCollapseIsRenderedFromCookie(t *testing.T) {
 
 func TestSessionsAreIsolatedAndAnEndedSessionIsReported(t *testing.T) {
 	service := NewService(testGenerator{query: GeneratedQuery{Cypher: "RETURN 1"}}, &testExecutor{result: QueryResult{Columns: []string{"v"}, Rows: [][]string{{"private-result"}}}}, &testCatalog{})
-	shared := NewHTTPHandler(service, nil, nil)
+	shared := NewHTTPHandler(service, nil, nil, nil)
 	first, second := &browser{handler: shared, cookies: map[string]*http.Cookie{}}, &browser{handler: shared, cookies: map[string]*http.Cookie{}}
 	submitForm(first, "/ask", url.Values{"question": {"My question"}})
 	assertContains(t, getPage(second, "/").Body.String(), nil, []string{"private-result", "My question"})
