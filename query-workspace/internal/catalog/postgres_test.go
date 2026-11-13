@@ -67,11 +67,13 @@ func TestCatalogueFailuresAreTracedWithoutQueryData(t *testing.T) {
 	ctx := context.Background()
 	_, _ = store.Save(ctx, workspace.SavedQuery{Cypher: "private-query"})
 	_, _ = store.Get(ctx, "private-id")
+	_, _ = store.Update(ctx, "private-id", "private-name", "private-folder")
+	_ = store.Delete(ctx, "private-id")
 	_, _ = store.List(ctx)
 	_, _ = store.LatestSchema(ctx, "private-target")
 	_ = store.SaveSchema(ctx, schema.Snapshot{Text: "private-schema"})
 	spans := recorder.Ended()
-	want := []string{"postgres.save_query", "postgres.get_query", "postgres.list_queries", "postgres.load_schema", "postgres.save_schema"}
+	want := []string{"postgres.save_query", "postgres.get_query", "postgres.update_query", "postgres.delete_query", "postgres.list_queries", "postgres.load_schema", "postgres.save_schema"}
 	if len(spans) != len(want) {
 		t.Fatalf("got %d spans, want %d", len(spans), len(want))
 	}
@@ -141,6 +143,40 @@ func TestPostgresCatalogIntegration(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("saved query %q was not visible in catalogue", saved.ID)
+	}
+	updated, err := store.Update(ctx, saved.ID, "Renamed", "Team > Reviewed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := saved
+	want.Name, want.FolderPath = "Renamed", "Team > Reviewed"
+	if !reflect.DeepEqual(updated, want) {
+		t.Fatalf("updated query = %#v, want %#v", updated, want)
+	}
+	loaded, err = store.Get(ctx, saved.ID)
+	if err != nil || !reflect.DeepEqual(loaded, want) {
+		t.Fatalf("update was not persisted: %#v, %v", loaded, err)
+	}
+	if err := store.Delete(ctx, saved.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(ctx, saved.ID); !errors.Is(err, workspace.ErrNotFound) {
+		t.Fatalf("deleted query is still retrievable: %v", err)
+	}
+	queries, err = store.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range queries {
+		if query.ID == saved.ID {
+			t.Fatal("deleted query is still listed")
+		}
+	}
+	if _, err := store.Update(ctx, saved.ID, "Missing", "Drafts"); !errors.Is(err, workspace.ErrNotFound) {
+		t.Fatalf("updating deleted query: %v", err)
+	}
+	if err := store.Delete(ctx, saved.ID); !errors.Is(err, workspace.ErrNotFound) {
+		t.Fatalf("deleting missing query: %v", err)
 	}
 }
 

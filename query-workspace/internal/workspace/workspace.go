@@ -121,6 +121,8 @@ type Executor interface {
 
 type Catalog interface {
 	Save(context.Context, SavedQuery) (SavedQuery, error)
+	Update(context.Context, string, string, string) (SavedQuery, error)
+	Delete(context.Context, string) error
 	Get(context.Context, string) (SavedQuery, error)
 	List(context.Context) ([]SavedQuery, error)
 }
@@ -263,11 +265,8 @@ func (s *Service) generationFailed() {
 
 func (s *Service) Save(ctx context.Context, name, folder string, investigation Investigation) (SavedQuery, error) {
 	name = strings.TrimSpace(name)
-	if name == "" {
-		return SavedQuery{}, errors.New("query name is required")
-	}
-	if len(name) > 200 {
-		return SavedQuery{}, errors.New("query name must be 200 characters or fewer")
+	if err := validateQueryName(name); err != nil {
+		return SavedQuery{}, err
 	}
 	folderPath, err := normalizeFolderPath(folder)
 	if err != nil {
@@ -313,6 +312,28 @@ func (s *Service) Save(ctx context.Context, name, folder string, investigation I
 		Cypher:     cypher,
 		Parameters: parameters,
 	})
+}
+
+func (s *Service) Update(ctx context.Context, id, name, folder string) (SavedQuery, error) {
+	name = strings.TrimSpace(name)
+	if err := validateQueryName(name); err != nil {
+		return SavedQuery{}, err
+	}
+	path, err := normalizeFolderPath(folder)
+	if err != nil {
+		return SavedQuery{}, err
+	}
+	return s.catalog.Update(ctx, id, name, path)
+}
+
+func validateQueryName(name string) error {
+	if name == "" {
+		return errors.New("query name is required")
+	}
+	if len(name) > 200 {
+		return errors.New("query name must be 200 characters or fewer")
+	}
+	return nil
 }
 
 func (s *Service) List(ctx context.Context) ([]SavedQuery, error) {

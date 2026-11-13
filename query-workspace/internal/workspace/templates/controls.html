@@ -61,6 +61,7 @@
       <span class="query-name" title="{{if .Question}}{{.Question}}{{else}}{{.Name}}{{end}}">{{.Name}}</span>
       {{if eq .Kind "cypher"}}<span class="cy-tag" title="Saved Cypher">cy</span>{{end}}
       <form method="post" action="/queries/{{.ID}}/run" data-run="saved"><button type="submit" aria-label="Run saved query {{.Name}}">Run</button></form>
+      <form method="post" action="/queries/{{.ID}}/edit" data-keep-draft><button type="submit" aria-label="Manage saved query {{.Name}}">Manage</button></form>
     </li>
   {{end}}
   </ul>{{end}}

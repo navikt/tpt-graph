@@ -1,0 +1,29 @@
+{{define "manage_query"}}
+<section class="save-form manage-query" aria-labelledby="manage-title">
+  <h2 id="manage-title">Rename or move {{.Manage.Name}}</h2>
+  {{if .Manage.Error}}<p id="manage-error" class="notice err" role="alert">{{.Manage.Error}}</p>{{end}}
+  <form method="post" action="/queries/{{.Manage.ID}}/update" data-keep-draft>
+    <div class="save-fields">
+      <div>
+        <label for="manage-name">Name</label>
+        <input id="manage-name" name="name" value="{{.Manage.Name}}" required maxlength="200" {{if .Manage.NameInvalid}}aria-invalid="true" aria-describedby="manage-error"{{end}}>
+      </div>
+      <div>
+        <label for="manage-folder">Folder</label>
+        <input id="manage-folder" name="folder" value="{{.Manage.Folder}}" list="manage-folders" aria-describedby="manage-folder-help{{if .Manage.FolderInvalid}} manage-error{{end}}" {{if .Manage.FolderInvalid}}aria-invalid="true"{{end}}>
+        <span id="manage-folder-help" class="muted">Choose or type a folder. Use &gt; for subfolders; leave blank for Drafts.</span>
+        <datalist id="manage-folders">{{range .Catalogue.Paths}}<option value="{{.}}">{{end}}</datalist>
+      </div>
+    </div>
+    <div class="manage-actions"><button type="submit" class="primary">Save changes</button><a href="/?mode={{.Mode}}">Cancel</a></div>
+  </form>
+  <details class="delete-query">
+    <summary class="err-ink">Delete saved query</summary>
+    <form method="post" action="/queries/{{.Manage.ID}}/delete" data-keep-draft>
+      <p>Delete this saved query? This cannot be undone. Your current draft and results will be kept.</p>
+      <label><input type="checkbox" name="confirm" value="yes" required> Confirm deletion of {{.Manage.Name}}</label>
+      <button type="submit" class="danger">Delete saved query</button>
+    </form>
+  </details>
+</section>
+{{end}}

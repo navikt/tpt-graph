@@ -72,6 +72,9 @@ func (h *HTTPHandler) routes() *http.ServeMux {
 	mux.HandleFunc("POST /save", h.save)
 	mux.HandleFunc("POST /sidebar", h.toggleSidebar)
 	mux.HandleFunc("POST /queries/{id}/run", h.runSaved)
+	mux.HandleFunc("POST /queries/{id}/edit", h.editSaved)
+	mux.HandleFunc("POST /queries/{id}/update", h.updateSaved)
+	mux.HandleFunc("POST /queries/{id}/delete", h.deleteSaved)
 	mux.HandleFunc("POST /runs/{id}/open", h.openInCypher)
 	return mux
 }
@@ -100,6 +103,7 @@ type pageData struct {
 	Save             saveView
 	SidebarOpen      bool
 	SessionEnded     bool
+	Manage           *manageView
 }
 
 type saveView struct {
@@ -349,10 +353,15 @@ func editableParameters(parameters map[string]any) (string, error) {
 }
 
 func (h *HTTPHandler) render(w http.ResponseWriter, r *http.Request, status int, session sessionView, mode InputMode, form saveView, pageError string) {
+	h.renderPage(w, r, status, session, mode, form, pageError, nil)
+}
+
+func (h *HTTPHandler) renderPage(w http.ResponseWriter, r *http.Request, status int, session sessionView, mode InputMode, form saveView, pageError string, manage *manageView) {
 	state := session.Modes[mode]
 	data := pageData{
 		Mode: mode, Error: pageError, Save: form, SessionEnded: session.Ended,
 		Search: strings.TrimSpace(r.URL.Query().Get("q")),
+		Manage: manage,
 	}
 	if cookie, err := r.Cookie(sidebarCookie); err != nil || cookie.Value != "closed" {
 		data.SidebarOpen = true
@@ -376,9 +385,6 @@ func (h *HTTPHandler) render(w http.ResponseWriter, r *http.Request, status int,
 			data.DiagnosticsError = "Could not display the last run."
 			status = http.StatusInternalServerError
 		}
-		if run.Saved != nil {
-			data.Save = saveView{Status: "done", Name: run.Saved.Name, Folder: run.Saved.FolderPath}
-		}
 	}
 	if data.Investigation != nil && data.Investigation.Query.Diagnostics != nil {
 		encoded, err := json.MarshalIndent(data.Investigation.Query.Diagnostics, "", "  ")
@@ -401,6 +407,14 @@ func (h *HTTPHandler) render(w http.ResponseWriter, r *http.Request, status int,
 		data.CatalogueCount = len(queries)
 		data.Catalogue = buildCatalogue(queries, data.Search)
 		data.NoSearchMatch = data.Catalogue.Matches == 0 && len(queries) > 0
+		if run := state.Run; run != nil && run.Saved != nil {
+			for _, query := range queries {
+				if query.ID == run.Saved.ID {
+					data.Save = saveView{Status: "done", Name: query.Name, Folder: query.FolderPath}
+					break
+				}
+			}
+		}
 	}
 	if h.schemas != nil {
 		schemaStatus, err := h.schemas.Status(r.Context())

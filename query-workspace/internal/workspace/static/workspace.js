@@ -46,21 +46,21 @@ document.querySelectorAll("form[data-run]").forEach(form => {
   });
 });
 
-// Saving stores the last run; sending the composer text along keeps unsent edits in the draft.
-const saveForm = document.querySelector("form.save-form");
-if (saveForm) {
-  saveForm.addEventListener("submit", () => {
-    saveForm.querySelectorAll("[data-draft]").forEach(input => input.remove());
-    composer.querySelectorAll("#question, #cypher, #parameters").forEach(field => {
+// Catalogue actions carry composer text so managing saved queries keeps unsent edits.
+document.querySelectorAll("form.save-form, form[data-keep-draft]").forEach(form => {
+  form.addEventListener("submit", () => {
+    form.querySelectorAll("[data-draft]").forEach(input => input.remove());
+    composer.querySelectorAll("[name=from], #question, #cypher, #parameters").forEach(field => {
+      if (field.name === "from" && form.elements.namedItem("mode")) return;
       const input = document.createElement("input");
       input.type = "hidden";
-      input.name = field.name;
+      input.name = field.name === "from" ? "mode" : field.name;
       input.value = field.value;
       input.dataset.draft = "";
-      saveForm.append(input);
+      form.append(input);
     });
   });
-}
+});
 
 window.addEventListener("pageshow", () => {
   document.getElementById("running").hidden = true;

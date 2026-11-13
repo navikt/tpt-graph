@@ -27,6 +27,10 @@
         {{if .Schema.RefreshFailed}}<p class="notice warn" role="status">▲ Schema refresh failed. The last successful snapshot, if any, has been retained.</p>{{end}}
       {{end}}
       {{template "composer" .}}
+      {{if .Manage}}
+        {{if .Manage.Notice}}<p class="notice info" role="status">{{.Manage.Notice}}</p>
+        {{else}}{{template "manage_query" .}}{{end}}
+      {{end}}
       <p class="pending" id="running" role="status" hidden>Running…</p>
       {{if .Error}}<p class="notice err" role="alert">{{.Error}}</p>{{end}}
       {{if not .Investigation}}

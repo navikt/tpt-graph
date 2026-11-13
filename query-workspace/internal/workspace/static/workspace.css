@@ -162,6 +162,9 @@ pre{padding:12px 14px;overflow:auto;white-space:pre;font:12.5px/1.6 var(--mono)}
 .diagnostics h3{margin-top:14px}.diagnostics>.muted{margin-top:12px}
 .save-form{padding:14px 16px;border:1px solid var(--border);border-radius:8px;display:grid;gap:12px}
 .save-form h2{font-size:14px}.save-form .section-heading>span{font-size:12px}
+.manage-query form{display:grid;gap:12px}.manage-actions{display:flex;align-items:center;gap:12px}
+.delete-query{border-top:1px solid var(--border);padding-top:12px}.delete-query[open]>summary{margin-bottom:12px}
+.danger{color:var(--err-ink);border-color:var(--err-border)}.danger:hover{color:var(--err-ink);background:var(--err-bg)}
 .save-fields{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}.save-fields>div{display:grid;gap:4px;flex:1;min-width:140px}.save-fields>div:first-child{flex:2;min-width:180px}
 [aria-invalid=true]{border-color:var(--err-ink)}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}

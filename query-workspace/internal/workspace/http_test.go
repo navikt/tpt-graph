@@ -172,9 +172,11 @@ func (e *testExecutor) Execute(ctx context.Context, query string, parameters map
 }
 
 type testCatalog struct {
-	queries []SavedQuery
-	query   SavedQuery
-	listErr error
+	queries   []SavedQuery
+	query     SavedQuery
+	listErr   error
+	updateErr error
+	deleteErr error
 }
 
 func (c *testCatalog) Save(_ context.Context, query SavedQuery) (SavedQuery, error) {
@@ -184,10 +186,41 @@ func (c *testCatalog) Save(_ context.Context, query SavedQuery) (SavedQuery, err
 }
 
 func (c *testCatalog) Get(_ context.Context, id string) (SavedQuery, error) {
+	for _, query := range c.queries {
+		if query.ID == id {
+			return query, nil
+		}
+	}
 	if id != c.query.ID {
 		return SavedQuery{}, ErrNotFound
 	}
 	return c.query, nil
+}
+
+func (c *testCatalog) Update(_ context.Context, id, name, folder string) (SavedQuery, error) {
+	if c.updateErr != nil {
+		return SavedQuery{}, c.updateErr
+	}
+	for i := range c.queries {
+		if c.queries[i].ID == id {
+			c.queries[i].Name, c.queries[i].FolderPath = name, folder
+			return c.queries[i], nil
+		}
+	}
+	return SavedQuery{}, ErrNotFound
+}
+
+func (c *testCatalog) Delete(_ context.Context, id string) error {
+	if c.deleteErr != nil {
+		return c.deleteErr
+	}
+	for i := range c.queries {
+		if c.queries[i].ID == id {
+			c.queries = append(c.queries[:i], c.queries[i+1:]...)
+			return nil
+		}
+	}
+	return ErrNotFound
 }
 
 func TestRunSavedUsesStoredQueryWithoutGenerating(t *testing.T) {

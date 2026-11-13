@@ -104,6 +104,24 @@ func (p *Postgres) Get(ctx context.Context, id string) (saved workspace.SavedQue
 	return query, nil
 }
 
+func (p *Postgres) Update(ctx context.Context, id, name, folder string) (saved workspace.SavedQuery, updateErr error) {
+	ctx, end := observability.StartSpan(ctx, "postgres.update_query", trace.SpanKindClient,
+		attribute.String("db.system.name", "postgresql"), attribute.String("db.operation.name", "UPDATE"))
+	defer func() { end(updateErr) }()
+	query, err := scanQuery(p.db.QueryRowContext(ctx,
+		`UPDATE saved_queries SET name = $2, folder_path = $3 WHERE id = $1
+		 RETURNING id, name, folder_path, kind, question, cypher, parameters, created_at`,
+		id, name, folder,
+	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return workspace.SavedQuery{}, workspace.ErrNotFound
+	}
+	if err != nil {
+		return workspace.SavedQuery{}, fmt.Errorf("updating saved query: %w", err)
+	}
+	return query, nil
+}
+
 func (p *Postgres) List(ctx context.Context) (saved []workspace.SavedQuery, listErr error) {
 	ctx, end := observability.StartSpan(ctx, "postgres.list_queries", trace.SpanKindClient,
 		attribute.String("db.system.name", "postgresql"), attribute.String("db.operation.name", "SELECT"))
@@ -129,6 +147,24 @@ func (p *Postgres) List(ctx context.Context) (saved []workspace.SavedQuery, list
 		return nil, fmt.Errorf("iterating saved queries: %w", err)
 	}
 	return queries, nil
+}
+
+func (p *Postgres) Delete(ctx context.Context, id string) (deleteErr error) {
+	ctx, end := observability.StartSpan(ctx, "postgres.delete_query", trace.SpanKindClient,
+		attribute.String("db.system.name", "postgresql"), attribute.String("db.operation.name", "DELETE"))
+	defer func() { end(deleteErr) }()
+	result, err := p.db.ExecContext(ctx, `DELETE FROM saved_queries WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("deleting saved query: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking deleted saved query: %w", err)
+	}
+	if count == 0 {
+		return workspace.ErrNotFound
+	}
+	return nil
 }
 
 type rowScanner interface {
