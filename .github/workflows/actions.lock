@@ -8,12 +8,12 @@ workflows:
         - 'navikt/automerge-dependabot@v1.7.0'
     '.github/workflows/main.yaml':
         - 'actions/checkout@v7.0.1'
-        - 'nais/deploy@7b60caaded00332e9aa117a8342daa0876851dfe'
-        - 'nais/docker-build-push@d3a1f7e259ecc381a50435e1d4add9059429ebd7'
+        - 'nais/deploy@6a9dcd6df697ec2d38edc78cadb0b9acd1232f50'
+        - 'nais/docker-build-push@ceabe305c64640175f133b7e59af6666b0a3c46c'
     '.github/workflows/query-workspace.yaml':
         - 'actions/checkout@v7.0.1'
-        - 'nais/deploy@7b60caaded00332e9aa117a8342daa0876851dfe'
-        - 'nais/docker-build-push@d3a1f7e259ecc381a50435e1d4add9059429ebd7'
+        - 'nais/deploy@6a9dcd6df697ec2d38edc78cadb0b9acd1232f50'
+        - 'nais/docker-build-push@ceabe305c64640175f133b7e59af6666b0a3c46c'
 dependencies:
     'actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae':
         ref: 'v5.0.5'
@@ -81,9 +81,9 @@ dependencies:
         commit: 'sha1-7c6bc770dae815cd3e89ee6cdf493a5fab2cc093'
         owner_id: 71461757
         repo_id: 407242578
-    'nais/attest-sign@a790bd54d388327e00aed3b1eee2d2311bcce0d5':
-        ref: 'v2.1.3'
-        commit: 'sha1-a790bd54d388327e00aed3b1eee2d2311bcce0d5'
+    'nais/attest-sign@fb244dcfc50e17d1c47065afedad95b1844a12fc':
+        ref: 'v2.1.4'
+        commit: 'sha1-fb244dcfc50e17d1c47065afedad95b1844a12fc'
         owner_id: 29488289
         repo_id: 617411776
         uses:
@@ -91,20 +91,22 @@ dependencies:
             - 'aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25'
             - 'oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63'
             - 'sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6'
-    'nais/deploy@7b60caaded00332e9aa117a8342daa0876851dfe':
-        ref: 'v2'
-        commit: 'sha1-7b60caaded00332e9aa117a8342daa0876851dfe'
+    'nais/deploy@6a9dcd6df697ec2d38edc78cadb0b9acd1232f50':
+        ref: 'v3'
+        commit: 'sha1-6a9dcd6df697ec2d38edc78cadb0b9acd1232f50'
         owner_id: 29488289
         repo_id: 166402203
-    'nais/docker-build-push@d3a1f7e259ecc381a50435e1d4add9059429ebd7':
+        uses:
+            - 'nais/setup@fb8692f65df9c904e2cdac5d395630ac876abdcf'
+    'nais/docker-build-push@ceabe305c64640175f133b7e59af6666b0a3c46c':
         ref: 'v0'
-        commit: 'sha1-d3a1f7e259ecc381a50435e1d4add9059429ebd7'
+        commit: 'sha1-ceabe305c64640175f133b7e59af6666b0a3c46c'
         owner_id: 29488289
         repo_id: 590934741
         uses:
             - 'docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc'
             - 'docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302'
-            - 'nais/attest-sign@a790bd54d388327e00aed3b1eee2d2311bcce0d5'
+            - 'nais/attest-sign@fb244dcfc50e17d1c47065afedad95b1844a12fc'
             - 'nais/login@40b72a35a18ddf2ad74b632461139ab838cc2a2f'
     'nais/login@40b72a35a18ddf2ad74b632461139ab838cc2a2f':
         ref: 'v0'
@@ -115,6 +117,11 @@ dependencies:
             - 'docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121'
             - 'docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd'
             - 'google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093'
+    'nais/setup@fb8692f65df9c904e2cdac5d395630ac876abdcf':
+        ref: 'v1.0.3'
+        commit: 'sha1-fb8692f65df9c904e2cdac5d395630ac876abdcf'
+        owner_id: 29488289
+        repo_id: 1048418871
     'navikt/automerge-dependabot@v1.7.0':
         ref: 'v1.7.0'
         commit: 'sha1-2c57e8fdb262ad558901e1242c89b19346e3a7a1'
