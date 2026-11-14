@@ -93,14 +93,14 @@
         <textarea id="parameters" name="parameters" rows="3" spellcheck="false" placeholder='{ "language": "PHP" }'>{{.ParamsInput}}</textarea>
       </details>
     {{else}}
-      <textarea id="question" name="question" required maxlength="4000" rows="3" placeholder="e.g. Which non-archived repositories use PHP?">{{.Question}}</textarea>
+      <textarea id="question" name="question" required maxlength="4000" rows="3" aria-describedby="model-input-note" placeholder="e.g. Which non-archived repositories use PHP?">{{.Question}}</textarea>
     {{end}}
     <div class="composer-footer">
       {{if eq .Mode "cypher"}}
         <span>Runs as written, after the same validation and read restrictions as generated queries. Doesn't need schema metadata.</span>
         <div><kbd class="js-only" hidden>⌘ / Ctrl ↵</kbd><button type="submit" class="primary">Validate and run</button></div>
       {{else}}
-        <span>Generates Cypher, validates it, then executes immediately. There is no review step before execution.</span>
+        <span id="model-input-note">Generates Cypher, validates it, then executes immediately. There is no review step before execution. Questions are sent to Vertex AI. Do not paste graph records, query results, or secrets.</span>
         <div><kbd class="js-only" hidden>⌘ / Ctrl ↵</kbd><button type="submit" class="primary" {{if .Schema}}{{if not .Schema.Available}}disabled aria-describedby="generation-note"{{end}}{{end}}>Generate and run</button></div>
       {{end}}
     </div>

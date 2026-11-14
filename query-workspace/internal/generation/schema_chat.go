@@ -15,8 +15,11 @@ import (
 	"tpt-graph/query-workspace/internal/workspace"
 )
 
+const chatMaxOutputTokens = 16384
+
 const schemaChatPrompt = `You help users discover the schema of their Cartography Neo4j database.
 You have access ONLY to a cached metadata snapshot, never records or property values.
+Never request database access, sample records, query results, or credentials from the user or a tool.
 Use search_schema to find labels, property names and relationship types by a short substring.
 Search singular stems (e.g. branch rather than branches), synonyms and broader terms when needed.
 Use inspect_node to inspect an exact observed label and its directed one-hop neighbourhood.
@@ -36,7 +39,8 @@ Explain when a question cannot be answered from metadata alone.`
 func (g *VertexGenerator) Chat(ctx context.Context, history []schema.Turn, question string) (reply schema.Reply, chatErr error) {
 	ctx, end := observability.StartSpan(ctx, "vertex.schema_chat", trace.SpanKindClient,
 		attribute.String("gen_ai.provider.name", "gcp.vertex_ai"),
-		attribute.String("gen_ai.request.model", g.model))
+		attribute.String("gen_ai.request.model", g.chatModel),
+		attribute.String("gen_ai.request.thinking_level", string(genai.ThinkingLevelHigh)))
 	defer func() { end(chatErr) }()
 	question = strings.TrimSpace(question)
 	if question == "" || len(question) > schema.MaxQuestionBytes {
@@ -45,7 +49,7 @@ func (g *VertexGenerator) Chat(ctx context.Context, history []schema.Turn, quest
 	if len(history) > schema.MaxChatTurns {
 		return reply, errors.New("schema conversation exceeds the history limit")
 	}
-	if g.project == "" || g.location == "" || g.model == "" {
+	if g.project == "" || g.location == "" || g.chatModel == "" {
 		return reply, errors.New("Vertex AI project, location, and model must be configured")
 	}
 	ctx, cancel := context.WithTimeout(ctx, generationTimeout)
@@ -73,8 +77,8 @@ func (g *VertexGenerator) Chat(ctx context.Context, history []schema.Turn, quest
 	contents = append(contents, genai.NewContentFromText(question, genai.RoleUser))
 	config := &genai.GenerateContentConfig{
 		SystemInstruction: genai.NewContentFromText(schemaChatPrompt, genai.RoleUser),
-		MaxOutputTokens:   maxOutputTokens,
-		ThinkingConfig:    &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelLow},
+		MaxOutputTokens:   chatMaxOutputTokens,
+		ThinkingConfig:    &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
 		Tools: []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{
 			schemaFunction("search_schema", "Search schema labels, property names and relationship types by a case-insensitive substring. Results are bounded; narrow truncated searches.", "query"),
 			schemaFunction("inspect_node", "Inspect an exact label with its property types and inferred directed relationships. Results are bounded.", "name"),
@@ -83,7 +87,7 @@ func (g *VertexGenerator) Chat(ctx context.Context, history []schema.Turn, quest
 	}
 	lookups, retrieved := 0, false
 	for range 7 {
-		response, err := client.Models.GenerateContent(ctx, g.model, contents, config)
+		response, err := client.Models.GenerateContent(ctx, g.chatModel, contents, config)
 		if err != nil {
 			return schema.Reply{}, &workspace.GenerationError{
 				Kind: "schema_chat_failed", Cause: err,
@@ -105,7 +109,8 @@ func (g *VertexGenerator) Chat(ctx context.Context, history []schema.Turn, quest
 			reply.Text, reply.CapturedAt = text, snapshot.CapturedAt
 			trace.SpanFromContext(ctx).SetAttributes(attribute.Int("schema.lookup_count", lookups),
 				attribute.String("schema.snapshot_sha256", snapshot.Hash))
-			g.logger.InfoContext(ctx, "schema chat completed", "lookups", lookups, "schema_sha256", snapshot.Hash)
+			g.logger.InfoContext(ctx, "schema chat completed", "model", g.chatModel,
+				"thinking_level", genai.ThinkingLevelHigh, "lookups", lookups, "schema_sha256", snapshot.Hash)
 			return reply, nil
 		}
 		if lookups+len(calls) > 6 {

@@ -44,7 +44,7 @@
       <div class="composer">
         <textarea id="schema-question" name="question" rows="2" required maxlength="4000" aria-describedby="schema-help{{if .Error}} schema-chat-error{{end}}">{{.Draft}}</textarea>
         <div class="composer-footer">
-          <span id="schema-help">Metadata only. No Cypher or record retrieval. Up to six lookups per answer.</span>
+          <span id="schema-help">Metadata only. No Cypher or record retrieval. Up to six lookups per answer. Questions are sent to Vertex AI. Do not paste graph records, query results, or secrets.</span>
           <button type="submit" class="primary" {{if .Schema}}{{if not .Schema.Available}}disabled{{end}}{{end}}>Ask schema assistant</button>
         </div>
       </div>

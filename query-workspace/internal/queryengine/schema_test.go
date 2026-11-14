@@ -47,20 +47,20 @@ func TestNativeSchemaCapturesPropertiesAndInferredDirections(t *testing.T) {
 		case nodePropertiesQuery:
 			return &metadataResult{records: []*neodriver.Record{
 				metadataRecord(map[string]any{"nodeLabels": []any{"GitHubDependency", "Dependency"}, "propertyName": "name", "propertyTypes": []any{"String"}}),
-				metadataRecord(map[string]any{"nodeLabels": []any{"GitHubRepository"}, "propertyName": "name", "propertyTypes": []any{"String"}}),
+				metadataRecord(map[string]any{"nodeLabels": []any{"GitHubRepository"}, "propertyName": "name", "propertyTypes": []any{"String"}, "sampleValue": "record-value-canary"}),
 			}}, nil
 		case relationshipPropertiesQuery:
 			return &metadataResult{records: []*neodriver.Record{
-				metadataRecord(map[string]any{"relType": ":`REQUIRES`", "propertyName": "lastupdated", "propertyTypes": []any{"Long"}}),
+				metadataRecord(map[string]any{"relType": ":`REQUIRES`", "propertyName": "lastupdated", "propertyTypes": []any{"Long"}, "sampleValue": "record-value-canary"}),
 			}}, nil
 		case visualizationQuery:
 			return &metadataResult{records: []*neodriver.Record{
 				metadataRecord(map[string]any{
 					"nodes": []any{
-						neodriver.Node{Id: -1, Props: map[string]any{"name": "GitHubRepository"}},
+						neodriver.Node{Id: -1, Props: map[string]any{"name": "GitHubRepository", "sampleValue": "record-value-canary"}},
 						neodriver.Node{Id: -2, Props: map[string]any{"name": "Dependency"}},
 					},
-					"relationships": []any{neodriver.Relationship{StartId: -1, EndId: -2, Type: "REQUIRES"}},
+					"relationships": []any{neodriver.Relationship{StartId: -1, EndId: -2, Type: "REQUIRES", Props: map[string]any{"sampleValue": "record-value-canary"}}},
 				}),
 			}}, nil
 		default:
@@ -84,6 +84,9 @@ func TestNativeSchemaCapturesPropertiesAndInferredDirections(t *testing.T) {
 	}
 	if !reflect.DeepEqual(queries, []string{nodePropertiesQuery, relationshipPropertiesQuery, visualizationQuery}) {
 		t.Fatalf("discovery queries = %#v", queries)
+	}
+	if strings.Contains(text, "record-value-canary") || strings.Contains(text, "sampleValue") {
+		t.Fatalf("non-schema procedure output leaked into the snapshot: %s", text)
 	}
 	index, err := schema.NewIndex(text)
 	if err != nil {

@@ -19,6 +19,14 @@ Go (1.26.3+ — `go.mod` enforces a bleeding-edge toolchain), Neo4j, standard `n
 - **TDD.** Write or update tests before changing behaviour. If a change to an endpoint or function does not cause a test failure, treat that as a coverage gap to fix first. Tests live alongside the package they test (`*_test.go` in the same directory).
 - Tests do not require a live Neo4j instance. Use the existing interface mocks in `internal/handler/handler_test.go` as the pattern for new handler tests. Use `httptest.NewServer` for external HTTP clients.
 
+## Model data boundary
+
+- **Models must NEVER have access to database data, only schema metadata.** This applies to every model, provider, prompt, tool, and future feature.
+- Model-facing code may use labels, property names/types, relationship types, and metadata-inferred relationship patterns from the schema cache. It must not receive database records, property values, query results, result graphs, exports, or raw database errors.
+- Keep database execution separate from model generation. Never feed execution output back for query repair, retries, summarization, grounding, or conversation history. Model-facing components must not expose a database executor, driver, or data-query tool.
+- User questions and schema-chat history are sent to the model. Warn users not to paste records, query results, or secrets; do not claim that free-text input is automatically sanitized.
+- Preserve regression coverage for metadata-only discovery, outbound model requests, and rejection of model-requested data access.
+
 ## Git
 
 Use `git log`, `git diff`, `git show`, and `git status` freely for read-only inspection. Commits, pushes, and anything that touches upstream are the user's responsibility — do not run them.

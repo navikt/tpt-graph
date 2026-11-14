@@ -21,6 +21,24 @@ import (
 	"tpt-graph/query-workspace/internal/schema"
 )
 
+func TestModelQuestionFormsExplainTheSchemaOnlyBoundary(t *testing.T) {
+	handler := newTestHandler(NewService(testGenerator{}, &testExecutor{}, &testCatalog{}), nil, nil)
+	for _, path := range []string{"/", "/schema"} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			for _, warning := range []string{
+				"Questions are sent to Vertex AI.",
+				"Do not paste graph records, query results, or secrets.",
+			} {
+				if !strings.Contains(response.Body.String(), warning) {
+					t.Errorf("%s is missing the model input warning %q", path, warning)
+				}
+			}
+		})
+	}
+}
+
 func TestAskDisplaysGenerationDiagnosticsOnSuccessAndFailure(t *testing.T) {
 	for _, failed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "failure"}[failed], func(t *testing.T) {

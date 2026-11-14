@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -56,7 +57,7 @@ func TestGenerateClassifiesFailuresAndKeepsDiagnosticsWithoutPartialQuery(t *tes
 			if err != nil {
 				t.Fatal(err)
 			}
-			generator := NewVertexGenerator("test-project", "eu", "test-model",
+			generator := NewVertexGenerator("test-project", "eu", "test-model", "test-chat-model",
 				&testSchemaProvider{snapshot: schema.Snapshot{Text: "test schema"}}, slog.Default())
 			generator.client = client
 			query, err := generator.Generate(context.Background(), "find nodes")
@@ -102,7 +103,7 @@ func TestGenerateDistinguishesLocalTimeoutAndCancellation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			generator := NewVertexGenerator("test-project", "eu", "test-model",
+			generator := NewVertexGenerator("test-project", "eu", "test-model", "test-chat-model",
 				&testSchemaProvider{snapshot: schema.Snapshot{Text: "test schema"}}, slog.Default())
 			generator.client = client
 			query, err := generator.Generate(context.Background(), "find nodes")
@@ -137,7 +138,7 @@ func TestGenerateReturnsResponseAndNetworkDiagnostics(t *testing.T) {
 		t.Fatal(err)
 	}
 	var logs bytes.Buffer
-	generator := NewVertexGenerator("test-project", "eu", "test-model",
+	generator := NewVertexGenerator("test-project", "eu", "test-model", "test-chat-model",
 		&testSchemaProvider{snapshot: schema.Snapshot{Text: "private-schema", Hash: "schema-hash", CapturedAt: time.Now()}},
 		slog.New(slog.NewJSONHandler(&logs, nil)))
 	generator.client = client
@@ -205,6 +206,89 @@ func (p *testSchemaProvider) Current(context.Context) (schema.Snapshot, error) {
 	return p.snapshot, p.err
 }
 
+type dataBoundaryExecutor struct {
+	calls int
+	err   error
+}
+
+func (e *dataBoundaryExecutor) Execute(context.Context, string, map[string]any) (workspace.QueryResult, error) {
+	e.calls++
+	return workspace.QueryResult{
+		Columns: []string{"name"},
+		Rows:    [][]string{{"database-record-canary"}},
+		Graph: workspace.ResultGraph{Nodes: []workspace.GraphNode{{
+			ID: "database-record-canary", Properties: map[string]string{"name": "database-record-canary"},
+		}}},
+	}, e.err
+}
+
+func TestModelsNeverReceiveDatabaseResultsOrExecutionErrors(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{"results", nil},
+		{"execution failure", errors.New("database-error-canary")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			queryRequests, chatRequests := 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+				}
+				body, err := json.Marshal(request)
+				if err != nil {
+					t.Error(err)
+				}
+				for _, forbidden := range []string{"database-record-canary", "database-error-canary"} {
+					if strings.Contains(string(body), forbidden) {
+						t.Errorf("database content reached the model: %s", forbidden)
+					}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if strings.Contains(r.URL.Path, "/models/test-model:generateContent") {
+					queryRequests++
+					if request["tools"] != nil || !strings.Contains(string(body), `"thinkingLevel":"LOW"`) {
+						t.Error("query generation must remain tool-free with LOW thinking")
+					}
+					fmt.Fprint(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"text":"{\"cypher\":\"RETURN 1\",\"parameters\":{}}"}]}}]}`)
+					return
+				}
+				switch chatRequests {
+				case 0:
+					fmt.Fprint(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"functionCall":{"name":"execute_cypher","args":{"query":"MATCH (n) RETURN n"}}}]}}]}`)
+				case 1:
+					if !strings.Contains(string(body), "unknown tool: only search_schema and inspect_node are available") {
+						t.Error("model's attempted data access was not explicitly rejected")
+					}
+					fmt.Fprint(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"functionCall":{"name":"search_schema","args":{"query":"branch"}}}]}}]}`)
+				default:
+					fmt.Fprint(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"text":"The snapshot includes GitHubBranch metadata only."}]}}]}`)
+				}
+				chatRequests++
+			}))
+			defer server.Close()
+			generator := chatGenerator(t, server, schema.Snapshot{Text: chatSchema})
+			executor := &dataBoundaryExecutor{err: test.err}
+			service := workspace.NewService(generator, executor, nil)
+			for range 2 {
+				investigation, err := service.Ask(context.Background(), "Which node types have a name property?")
+				if !errors.Is(err, test.err) || len(investigation.Result.Rows) != 1 {
+					t.Fatalf("query execution changed: result=%#v error=%v", investigation.Result, err)
+				}
+			}
+			if _, err := generator.Chat(context.Background(), nil, "Which schema types describe branches?"); err != nil {
+				t.Fatal(err)
+			}
+			if queryRequests != 2 || chatRequests != 3 || executor.calls != 2 {
+				t.Fatalf("unexpected model requests or model-triggered execution: queries=%d chat=%d executions=%d",
+					queryRequests, chatRequests, executor.calls)
+			}
+		})
+	}
+}
+
 func TestGenerateUsesLatestCachedSchemaInEachVertexRequest(t *testing.T) {
 	recorder := tracetest.NewSpanRecorder()
 	traces := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
@@ -251,7 +335,7 @@ func TestGenerateUsesLatestCachedSchemaInEachVertexRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &testSchemaProvider{}
-	generator := NewVertexGenerator("test-project", "eu", "test-model", provider, slog.Default())
+	generator := NewVertexGenerator("test-project", "eu", "test-model", "test-chat-model", provider, slog.Default())
 	generator.client = client
 	for _, text := range []string{"Dependency {name: String}", "GitHubRepository {id: String}"} {
 		provider.snapshot = schema.Snapshot{Text: text}

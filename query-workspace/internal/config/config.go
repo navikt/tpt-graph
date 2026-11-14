@@ -17,6 +17,7 @@ type Config struct {
 	GoogleCloudProject  string
 	GoogleCloudLocation string
 	VertexModel         string
+	VertexChatModel     string
 	QueryTimeout        time.Duration
 	MaxRows             int
 	MaxResultBytes      int
@@ -42,6 +43,7 @@ func Load() (Config, error) {
 	config.GoogleCloudProject = os.Getenv("GOOGLE_CLOUD_PROJECT")
 	config.GoogleCloudLocation = get("GOOGLE_CLOUD_LOCATION", "eu")
 	config.VertexModel = get("VERTEX_MODEL", "gemini-3.8-flash")
+	config.VertexChatModel = get("VERTEX_CHAT_MODEL", "gemini-3.8-flash")
 	config.QueryTimeout, err = seconds("NEO4J_QUERY_TIMEOUT_SECONDS", 10)
 	if err != nil {
 		return Config{}, err

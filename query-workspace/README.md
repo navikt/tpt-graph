@@ -75,7 +75,7 @@ fields, and status messages do not rely on colour alone.
 ## Schema chat
 
 Open **Schema chat** (`GET /schema`) to explore what the cached schema contains.
-The assistant uses the existing Vertex AI configuration, with two bounded tools:
+The assistant uses its own Vertex AI model setting, with two bounded tools:
 `search_schema` matches substrings in labels, property names and relationship
 types, and `inspect_node` retrieves an exact label and its directed one-hop
 schema neighbourhood. It receives retrieved metadata rather than the full
@@ -101,6 +101,40 @@ Chat is not saved in PostgreSQL. `POST /schema/reset` clears the conversation;
 in-flight answers cannot restore a conversation that was reset or overwrite a
 newer answer. Failed turns retain the question for retry without changing history.
 
+## Schema-only model access
+
+**Models must NEVER have access to database data, only schema metadata.**
+This boundary applies to query generation and chat, regardless of the model
+or provider selected. Schema metadata means labels, property names and types,
+relationship types, and metadata-inferred relationship patterns. It does not
+include actual records, property values, record counts, query results, or
+verified graph edges.
+
+The application enforces this separation:
+
+- Generation receives the user's question and the cached schema. It has no tools.
+  The application validates and executes the generated Cypher separately; results,
+  result graphs, and raw execution errors are never sent back to the model.
+- Chat receives the user's question, earlier schema-chat questions and answers,
+  and bounded metadata lookups. Its only tools are `search_schema` and
+  `inspect_node`; neither can query database records. Unknown tools are rejected.
+  Investigation results and hand-written Cypher drafts are not chat context.
+- Schema discovery projects only metadata from the three fixed native schema
+  procedures. It does not include sample records or property values. Failure
+  never falls back to sampling data or giving the model database access.
+
+Do not add model-driven data queries, result summarization, execution-error
+feedback for query repair, or data attachments to prompts, tools, or history.
+Higher reasoning effort or a model change must not weaken this boundary.
+The application still needs Neo4j access to run user investigations; the model
+does not receive that executor or its credentials.
+
+**Free-text input is not automatically sanitized.** Questions and schema-chat
+history are sent to Vertex AI, so users must not paste graph records, query
+results, credentials, or other secrets into either question form. Both forms
+display this warning. Model instructions also prohibit requesting records,
+query results, credentials, or database access.
+
 ## Runtime configuration
 
 Nais provides `DB_URL` for the PostgreSQL catalogue. The `tpt-query-workspace`
@@ -114,11 +148,34 @@ secret must provide:
 | `GOOGLE_CLOUD_PROJECT` | Vertex AI project |
 
 Application access is controlled by the Nais manifest and login sidecar.
-`GOOGLE_CLOUD_LOCATION` and `VERTEX_MODEL` are set in the Nais manifest.
+`GOOGLE_CLOUD_LOCATION`, `VERTEX_MODEL`, and `VERTEX_CHAT_MODEL` are set in
+the Nais manifest.
 The `eu` location uses `aiplatform.eu.rep.googleapis.com`, which must be
 allowed in `accessPolicy.outbound.external`.
 Local development also needs the same values plus a working Application
 Default Credentials identity.
+
+Query generation and chat use independent model settings:
+
+| Workload | Model variable | Default | Thinking | Maximum output tokens per request |
+|---|---|---|---|---|
+| Query generation | `VERTEX_MODEL` | `gemini-3.8-flash` | LOW | 4,096 |
+| Schema chat | `VERTEX_CHAT_MODEL` | `gemini-3.8-flash` | HIGH | 16,384 |
+
+Changing `VERTEX_MODEL` does not change the chat model. Both workloads retain
+the 45-second deadline; for chat this covers all model and tool rounds, not
+each request. Chat has a separate, larger token budget to accommodate reasoning
+and its final answer; displayed answers remain limited to 16,000 bytes.
+HIGH thinking prioritizes reasoning quality, not lower latency, and can increase
+token use and cost. It does not guarantee a better answer or fewer requests.
+No live-model quality or latency comparison is established by the automated
+tests, which use synthetic metadata and a local fake provider.
+
+Before changing models, confirm support for the configured EU endpoint, thinking
+level, function calling, and token budget. Do not silently fall back to a global
+endpoint, another provider, or a weaker model. Compare configurations using
+schema-only questions and metadata, measuring grounded correctness, appropriate
+uncertainty, tool rounds, token use, timeouts, and end-to-end latency.
 
 The defaults for `NEO4J_DATABASE`, query timeout, row cap, and result byte cap
 are configurable with `NEO4J_DATABASE`, `NEO4J_QUERY_TIMEOUT_SECONDS`,

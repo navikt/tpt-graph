@@ -39,8 +39,13 @@ controlled by the Nais manifest and login sidecar. The experimental deployment c
 tpt-graph's Neo4j credentials. Nais outbound access and driver read routing
 are not a database-enforced read-only guarantee.
 Vertex AI generation uses workload credentials (ADC) and requires
-`GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and `VERTEX_MODEL`. Schema
-metadata is refreshed daily at midnight Europe/Oslo and cached in PostgreSQL.
+`GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `VERTEX_MODEL`, and the independent
+`VERTEX_CHAT_MODEL` for schema chat. Models must never receive database records,
+property values, query results, or raw execution errors; only schema metadata
+is supplied as database context. User-entered questions are sent to Vertex AI,
+so do not paste records, results, or secrets into them. See the companion's
+[schema-only model boundary](query-workspace/README.md#schema-only-model-access).
+Schema metadata is refreshed daily at midnight Europe/Oslo and cached in PostgreSQL.
 Startup captures missing or overdue metadata; generation uses the latest
 successful snapshot and the UI shows its age. Saved queries can still be
 listed and rerun if Vertex AI generation or schema discovery is unavailable.

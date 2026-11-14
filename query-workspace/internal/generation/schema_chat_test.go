@@ -26,11 +26,31 @@ const chatSchema = "Node properties (observed in the database; properties may be
 func TestSchemaChatExploresMetadataWithToolsWithoutFullSchemaPrompt(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/models/test-chat-model:generateContent") {
+			t.Errorf("chat did not use its independent model: %s", r.URL.Path)
+		}
 		var request map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 		}
 		body, _ := json.Marshal(request)
+		var declared struct {
+			Tools []*genai.Tool
+		}
+		if err := json.Unmarshal(body, &declared); err != nil {
+			t.Error(err)
+		}
+		if len(declared.Tools) != 1 || len(declared.Tools[0].FunctionDeclarations) != 2 ||
+			declared.Tools[0].FunctionDeclarations[0].Name != "search_schema" ||
+			declared.Tools[0].FunctionDeclarations[1].Name != "inspect_node" {
+			t.Error("chat must expose only the two metadata tools")
+		}
+		if !strings.Contains(string(body), `"thinkingLevel":"HIGH"`) {
+			t.Errorf("chat must prioritize reasoning quality: %s", body)
+		}
+		if !strings.Contains(string(body), `"maxOutputTokens":16384`) {
+			t.Error("chat must reserve room for reasoning and the final answer")
+		}
 		if strings.Contains(string(body), "UnrelatedCloudType") || !strings.Contains(string(body), "earlier-question") {
 			t.Errorf("full schema leaked or conversation was lost: %s", body)
 		}
@@ -75,7 +95,7 @@ func chatGenerator(t *testing.T, server *httptest.Server, snapshot schema.Snapsh
 	if err != nil {
 		t.Fatal(err)
 	}
-	generator := NewVertexGenerator("test-project", "eu", "test-model", &testSchemaProvider{snapshot: snapshot}, slog.Default())
+	generator := NewVertexGenerator("test-project", "eu", "test-model", "test-chat-model", &testSchemaProvider{snapshot: snapshot}, slog.Default())
 	generator.client = client
 	return generator
 }

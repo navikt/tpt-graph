@@ -86,11 +86,13 @@ func main() {
 		cfg.GoogleCloudProject,
 		cfg.GoogleCloudLocation,
 		cfg.VertexModel,
+		cfg.VertexChatModel,
 		schemaCache,
 		logger,
 	)
 	logger.Info("query generation configured",
 		"model", cfg.VertexModel,
+		"chat_model", cfg.VertexChatModel,
 		"project", cfg.GoogleCloudProject,
 		"location", cfg.GoogleCloudLocation,
 		"prompt_version", generation.PromptVersion,

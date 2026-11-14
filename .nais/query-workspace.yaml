@@ -36,6 +36,8 @@ spec:
       value: eu
     - name: VERTEX_MODEL
       value: gemini-3.8-flash
+    - name: VERTEX_CHAT_MODEL
+      value: gemini-3.8-flash
   envFrom:
     - secret: tpt-graph
   gcp:

@@ -35,3 +35,32 @@ func TestLoadRejectsMissingDatabaseConfiguration(t *testing.T) {
 		t.Fatal("expected missing database configuration error")
 	}
 }
+
+func TestLoadKeepsChatModelIndependentOfQueryModel(t *testing.T) {
+	for key, value := range map[string]string{
+		"DB_URL":         "postgres://localhost/workspace",
+		"NEO4J_URI":      "neo4j://localhost:7687",
+		"NEO4J_USER":     "workspace",
+		"NEO4J_PASSWORD": "secret",
+		"VERTEX_MODEL":   "query-model",
+	} {
+		t.Setenv(key, value)
+	}
+	for _, test := range []struct {
+		name, configured, want string
+	}{
+		{"default", "", "gemini-3.8-flash"},
+		{"override", "chat-model", "chat-model"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("VERTEX_CHAT_MODEL", test.configured)
+			config, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if config.VertexModel != "query-model" || config.VertexChatModel != test.want {
+				t.Fatalf("model settings are not independent: %#v", config)
+			}
+		})
+	}
+}
