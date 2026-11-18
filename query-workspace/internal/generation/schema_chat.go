@@ -22,6 +22,7 @@ const (
 	chatMaxLookups      = 24
 	chatPromptVersion   = "1"
 	chatThinkingLevel   = genai.ThinkingLevelMedium
+	chatTimeout         = 120 * time.Second
 )
 
 const schemaChatPrompt = `You help users discover the schema of their Cartography Neo4j database.
@@ -58,7 +59,7 @@ func (g *VertexGenerator) Chat(ctx context.Context, history []schema.Turn, quest
 		Diagnostics: modeldiag.Diagnostics{
 			Model: g.chatModel, Location: g.location, PromptVersion: chatPromptVersion,
 			ThinkingLevel: string(chatThinkingLevel), MaxOutputTokens: chatMaxOutputTokens,
-			TimeoutSeconds: int(generationTimeout.Seconds()), QuestionBytes: len(question),
+			TimeoutSeconds: int(chatTimeout.Seconds()), QuestionBytes: len(question),
 			SystemBytes: len(schemaChatPrompt), Outcome: "success",
 		},
 		HistoryTurns: len(history), LookupLimit: chatMaxLookups, RequestLimit: chatMaxLookups + 1,
@@ -110,7 +111,7 @@ func (g *VertexGenerator) Chat(ctx context.Context, history []schema.Turn, quest
 	if g.project == "" || g.location == "" || g.chatModel == "" {
 		return reply, chatFailure("configuration_error", "Vertex AI project, location, and model must be configured.", nil)
 	}
-	ctx, cancel := context.WithTimeout(ctx, generationTimeout)
+	ctx, cancel := context.WithTimeout(ctx, chatTimeout)
 	defer cancel()
 	snapshot, err := g.schemas.Current(ctx)
 	if err != nil {

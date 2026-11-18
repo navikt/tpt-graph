@@ -82,7 +82,7 @@ schema neighbourhood. It receives retrieved metadata rather than the full
 schema. It has no Neo4j query tool and cannot retrieve records or property values.
 
 Each answer requires a successful metadata lookup, even for follow-ups. A turn
-has a 45-second deadline, at most 24 tool calls and 25 model requests.
+has a 120-second deadline, at most 24 tool calls and 25 model requests.
 Each tool result is limited to 24 types, 40 inferred relationships, 60 properties
 per type and 32 KiB encoded metadata. Truncation is explicit; narrower searches
 can focus the result. The latest answer's retrieved evidence is shown as a
@@ -162,9 +162,10 @@ Query generation and chat use independent model settings:
 | Query generation | `VERTEX_MODEL` | `gemini-3.8-flash` | LOW | 4,096 |
 | Schema chat | `VERTEX_CHAT_MODEL` | `gemini-3.8-flash` | MEDIUM | 16,384 |
 
-Changing `VERTEX_MODEL` does not change the chat model. Both workloads retain
-the 45-second deadline; for chat this covers all model and tool rounds, not
-each request. Chat has a separate, larger token budget to accommodate reasoning
+Changing `VERTEX_MODEL` does not change the chat model. Query generation has a
+45-second deadline. Chat has a separate 120-second deadline covering all model
+and tool rounds, not each request. The HTTP server write timeout is 150 seconds
+to allow the chat response to finish. Chat has a larger token budget to accommodate reasoning
 and its final answer; displayed answers remain limited to 16,000 bytes.
 Chat uses MEDIUM thinking to balance reasoning depth and latency. It does not
 guarantee faster answers, better quality or fewer requests.
@@ -304,8 +305,7 @@ under `chat`, with key outcome, timing, budget usage and token fields on the spa
 The latest attempt's diagnostics remain in the private browser session under
 its existing expiry and memory budget, including after reload. Starting a new
 conversation clears them. They are not saved in PostgreSQL or included in model
-conversation history. Schema-only model access and the 45-second deadline are
-unchanged.
+conversation history. Schema-only model access is unchanged.
 
 ## Optional integration checks
 

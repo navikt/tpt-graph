@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -149,6 +150,44 @@ func TestSchemaChatAnswersAfterTwentyFourLookups(t *testing.T) {
 			}
 			if requests != 24/batchSize+1 || lookups != 24 || !strings.Contains(reply.Text, "GitHubBranch") || len(reply.Evidence.Nodes) == 0 {
 				t.Fatalf("missing metadata-grounded answer: requests=%d lookups=%d reply=%#v", requests, lookups, reply)
+			}
+		})
+	}
+}
+
+func TestSchemaChatUsesLongerDeadlineWithoutExtendingCallerDeadline(t *testing.T) {
+	for _, test := range []struct {
+		name                   string
+		callerTimeout          time.Duration
+		minSeconds, maxSeconds int
+	}{
+		{"chat deadline", 5 * time.Minute, 46, 120},
+		{"shorter caller deadline", 5 * time.Second, 1, 5},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seconds, err := strconv.Atoi(r.Header.Get("X-Server-Timeout"))
+				if err != nil || seconds < test.minSeconds || seconds > test.maxSeconds {
+					t.Errorf("unexpected SDK server timeout: %q, want %d-%d seconds", r.Header.Get("X-Server-Timeout"), test.minSeconds, test.maxSeconds)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if requests == 0 {
+					fmt.Fprint(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"functionCall":{"name":"search_schema","args":{"query":"branch"}}}]}}]}`)
+				} else {
+					fmt.Fprint(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"text":"The snapshot includes GitHubBranch."}]}}]}`)
+				}
+				requests++
+			}))
+			defer server.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), test.callerTimeout)
+			defer cancel()
+			reply, err := chatGenerator(t, server, schema.Snapshot{Text: chatSchema}).Chat(ctx, nil, "branches?")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if requests != 2 || reply.Diagnostics == nil || reply.Diagnostics.TimeoutSeconds != 120 {
+				t.Fatal("chat deadline was not applied and reported consistently")
 			}
 		})
 	}
@@ -317,6 +356,9 @@ func TestSchemaChatDistinguishesLocalTimeoutCancellationAndNetworkFailure(t *tes
 			var failure *workspace.GenerationError
 			if !errors.As(err, &failure) || failure.Kind != test.kind || !errors.Is(err, test.err) {
 				t.Fatalf("expected preserved %s error, got %v", test.kind, err)
+			}
+			if test.kind == "local_timeout" && !strings.Contains(err.Error(), "120-second deadline") {
+				t.Fatal("local timeout message reports the wrong chat deadline")
 			}
 			d := reply.Diagnostics
 			if d == nil || d.Outcome != test.kind || d.HTTPStatus != 0 || d.Usage != nil || len(d.Attempts) != 1 ||

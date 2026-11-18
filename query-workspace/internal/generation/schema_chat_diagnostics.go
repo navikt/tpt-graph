@@ -3,6 +3,7 @@ package generation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"google.golang.org/genai"
@@ -71,7 +72,7 @@ func chatRequestFailure(err error) error {
 		}
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return chatFailure("local_timeout", "The schema assistant exceeded the application's 45-second deadline. Check the request timings in the diagnostics.", err)
+		return chatFailure("local_timeout", fmt.Sprintf("The schema assistant exceeded the application's %d-second deadline. Check the request timings in the diagnostics.", int(chatTimeout.Seconds())), err)
 	}
 	if errors.Is(err, context.Canceled) {
 		return chatFailure("canceled", "The schema assistant request was canceled. No database query was executed.", err)

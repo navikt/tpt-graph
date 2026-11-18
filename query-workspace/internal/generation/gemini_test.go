@@ -156,7 +156,7 @@ func TestGenerateReturnsResponseAndNetworkDiagnostics(t *testing.T) {
 	if len(d.Attempts) != 1 || d.Attempts[0].HTTPStatus != http.StatusOK || d.Attempts[0].TimeToFirstByteMS == nil || d.Attempts[0].RequestWriteMS == nil {
 		t.Fatalf("missing network diagnostics: %#v", d)
 	}
-	if d.SchemaBytes != len("private-schema") || d.SchemaHash != "schema-hash" || d.ThinkingLevel != "LOW" || d.MaxOutputTokens != 4096 || d.Outcome != "success" {
+	if d.SchemaBytes != len("private-schema") || d.SchemaHash != "schema-hash" || d.ThinkingLevel != "LOW" || d.MaxOutputTokens != 4096 || d.TimeoutSeconds != 45 || d.Outcome != "success" {
 		t.Fatalf("missing request metadata: %#v", d)
 	}
 	if strings.Contains(logs.String(), "private-question") || strings.Contains(logs.String(), "private-schema") || strings.Contains(logs.String(), "RETURN 1") {

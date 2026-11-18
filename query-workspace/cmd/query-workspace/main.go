@@ -126,7 +126,7 @@ func main() {
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      60 * time.Second,
+		WriteTimeout:      150 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 
