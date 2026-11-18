@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"tpt-graph/query-workspace/internal/modeldiag"
 )
 
 const (
@@ -44,9 +46,10 @@ type Evidence struct {
 }
 
 type Reply struct {
-	Text       string
-	Evidence   Evidence
-	CapturedAt time.Time
+	Text        string
+	Evidence    Evidence
+	CapturedAt  time.Time
+	Diagnostics *modeldiag.Chat
 }
 
 type Turn struct {

@@ -2,10 +2,12 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
+	"tpt-graph/query-workspace/internal/modeldiag"
 	"tpt-graph/query-workspace/internal/observability"
 	"tpt-graph/query-workspace/internal/schema"
 )
@@ -15,13 +17,15 @@ type SchemaAssistant interface {
 }
 
 type schemaPage struct {
-	Chat         []schema.Turn
-	Draft, Error string
-	Schema       *schema.Status
-	SchemaError  string
-	SessionEnded bool
-	Evidence     *schema.Evidence
-	Graph        *graphView
+	Chat                             []schema.Turn
+	Draft, Error                     string
+	Schema                           *schema.Status
+	SchemaError                      string
+	SessionEnded                     bool
+	Evidence                         *schema.Evidence
+	Graph                            *graphView
+	Diagnostics                      *modeldiag.Chat
+	DiagnosticJSON, DiagnosticsError string
 }
 
 func (h *HTTPHandler) schemaHome(w http.ResponseWriter, r *http.Request) {
@@ -47,27 +51,36 @@ func (h *HTTPHandler) schemaChat(w http.ResponseWriter, r *http.Request) {
 	reply, err := h.assistant.Chat(r.Context(), session.Chat, question)
 	if err != nil {
 		h.logRunError(r, "schema chat failed", err)
-		h.renderSchema(w, r, http.StatusBadGateway, session, question, err.Error())
-		return
 	}
+	diagnostics := reply.Diagnostics
+	reply.Diagnostics = nil
 	conflict := false
 	stored := h.sessions.update(session.ID, func(s *browserSession) {
 		if s.chatVersion != session.ChatVersion {
 			conflict = true
 		} else {
-			chat := append([]schema.Turn(nil), s.chat...)
-			chat = append(chat, schema.Turn{Question: question, Reply: reply})
-			if len(chat) > schema.MaxChatTurns {
-				chat = append([]schema.Turn(nil), chat[len(chat)-schema.MaxChatTurns:]...)
+			s.chatDiagnostics = diagnostics
+			s.chatVersion++
+			if err == nil {
+				chat := append([]schema.Turn(nil), s.chat...)
+				chat = append(chat, schema.Turn{Question: question, Reply: reply})
+				if len(chat) > schema.MaxChatTurns {
+					chat = append([]schema.Turn(nil), chat[len(chat)-schema.MaxChatTurns:]...)
+				}
+				s.chat = chat
 			}
-			s.chat, s.chatVersion = chat, s.chatVersion+1
 		}
 		session.Chat = append([]schema.Turn(nil), s.chat...)
 		session.ChatVersion = s.chatVersion
+		session.ChatDiagnostics = s.chatDiagnostics
 	})
 	if !stored || conflict {
 		h.renderSchema(w, r, http.StatusConflict, session, question,
 			"The schema conversation changed or expired while answering. This answer was not added. Send the question again.")
+		return
+	}
+	if err != nil {
+		h.renderSchema(w, r, http.StatusBadGateway, session, question, err.Error())
 		return
 	}
 	h.renderSchema(w, r, http.StatusOK, session, "", "")
@@ -77,6 +90,7 @@ func (h *HTTPHandler) schemaReset(w http.ResponseWriter, r *http.Request) {
 	session := h.sessions.load(w, r)
 	if !h.sessions.update(session.ID, func(s *browserSession) {
 		s.chat = nil
+		s.chatDiagnostics = nil
 		s.chatVersion++
 	}) {
 		h.renderSchema(w, r, http.StatusConflict, session, "", "The schema conversation has expired. Reload the page to start again.")
@@ -86,7 +100,17 @@ func (h *HTTPHandler) schemaReset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HTTPHandler) renderSchema(w http.ResponseWriter, r *http.Request, status int, session sessionView, draft, message string) {
-	data := schemaPage{Chat: session.Chat, Draft: draft, Error: message, SessionEnded: session.Ended}
+	data := schemaPage{Chat: session.Chat, Draft: draft, Error: message, SessionEnded: session.Ended, Diagnostics: session.ChatDiagnostics}
+	if data.Diagnostics != nil {
+		encoded, err := json.MarshalIndent(data.Diagnostics, "", "  ")
+		if err != nil {
+			h.logRunError(r, "encoding schema chat diagnostics", err)
+			data.DiagnosticsError = "Could not display chat diagnostics."
+			status = http.StatusInternalServerError
+		} else {
+			data.DiagnosticJSON = string(encoded)
+		}
+	}
 	if h.schemas != nil {
 		current, err := h.schemas.Status(r.Context())
 		if err != nil {

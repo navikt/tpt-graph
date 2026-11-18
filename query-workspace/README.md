@@ -82,7 +82,7 @@ schema neighbourhood. It receives retrieved metadata rather than the full
 schema. It has no Neo4j query tool and cannot retrieve records or property values.
 
 Each answer requires a successful metadata lookup, even for follow-ups. A turn
-has a 45-second deadline, at most six tool calls and seven model requests.
+has a 45-second deadline, at most 24 tool calls and 25 model requests.
 Each tool result is limited to 24 types, 40 inferred relationships, 60 properties
 per type and 32 KiB encoded metadata. Truncation is explicit; narrower searches
 can focus the result. The latest answer's retrieved evidence is shown as a
@@ -282,6 +282,30 @@ blocked, incomplete and malformed responses are not executed. A deadline alone
 does not establish that a question is too complex. Request settings, prompts,
 retry behavior and the 45-second generation budget are unchanged so the added
 measurements can be compared with the existing baseline.
+
+### Schema chat diagnostics
+
+Schema chat displays diagnostics for the latest attempt, including failures.
+The panel opens automatically on failure and shows lookup/request budgets,
+lookup counts, elapsed time, model settings and the trace ID. Each model request
+records HTTP/API status, finish/block reasons, response IDs, reported token usage
+and network attempts. Lookup entries contain only the tool name, outcome,
+returned type counts and truncation status. Unknown tool names are recorded as
+`unknown`; tool arguments, retrieved schema contents, thought signatures,
+answers and raw provider errors are not included.
+
+Top-level token usage sums the usage reported by individual requests.
+`usage_reported_requests` shows how many requests supplied usage; missing usage
+does not mean zero. Local deadlines, Google deadlines, lookup-budget exhaustion,
+blocked responses, token limits and unusable final answers have distinct outcomes.
+The same diagnostics are recorded in the structured `schema chat completed` log
+under `chat`, with key outcome, timing, budget usage and token fields on the span.
+
+The latest attempt's diagnostics remain in the private browser session under
+its existing expiry and memory budget, including after reload. Starting a new
+conversation clears them. They are not saved in PostgreSQL or included in model
+conversation history. Schema-only model access and the 45-second deadline are
+unchanged.
 
 ## Optional integration checks
 

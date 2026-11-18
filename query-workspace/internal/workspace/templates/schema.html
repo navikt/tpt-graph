@@ -27,7 +27,7 @@
     <section class="schema-conversation" aria-labelledby="conversation-title">
       <div class="section-heading">
         <h2 id="conversation-title">Explore the schema</h2>
-        {{if .Chat}}<form method="post" action="/schema/reset"><button type="submit">New conversation</button></form>{{end}}
+        {{if or .Chat .Diagnostics}}<form method="post" action="/schema/reset"><button type="submit">New conversation</button></form>{{end}}
       </div>
       {{if not .Chat}}<p class="muted">Try "Do we have information about GitHub branches?" Then ask about properties or how the types connect.</p>{{end}}
       {{range .Chat}}
@@ -44,7 +44,7 @@
       <div class="composer">
         <textarea id="schema-question" name="question" rows="2" required maxlength="4000" aria-describedby="schema-help{{if .Error}} schema-chat-error{{end}}">{{.Draft}}</textarea>
         <div class="composer-footer">
-          <span id="schema-help">Metadata only. No Cypher or record retrieval. Up to six lookups per answer. Questions are sent to Vertex AI. Do not paste graph records, query results, or secrets.</span>
+          <span id="schema-help">Metadata only. No Cypher or record retrieval. Up to 24 lookups per answer. Questions are sent to Vertex AI. Do not paste graph records, query results, or secrets.</span>
           <button type="submit" class="primary" {{if .Schema}}{{if not .Schema.Available}}disabled{{end}}{{end}}>Ask schema assistant</button>
         </div>
       </div>
@@ -52,6 +52,20 @@
     <p class="sr-only" id="live-status" aria-live="polite"></p>
     <p class="pending" id="running" role="status" hidden>Exploring schema metadata...</p>
     {{if .Error}}<p id="schema-chat-error" class="notice err" role="alert">{{.Error}}</p>{{end}}
+    {{if .DiagnosticsError}}<p class="notice err" role="alert">{{.DiagnosticsError}}</p>{{end}}
+    {{with .Diagnostics}}
+    <details class="diagnostics" {{if ne .Outcome "success"}}open{{end}}>
+      <summary><span><strong>Chat diagnostics</strong> - latest attempt, request and network metadata</span><span class="diagnostic-summary">{{.Outcome}} - {{.LookupCount}}/{{.LookupLimit}} lookups</span></summary>
+      <dl class="diagnostic-fields">
+        <dt>Outcome</dt><dd>{{.Outcome}}</dd>
+        <dt>Chat duration</dt><dd>{{printf "%.0f" .DurationMS}} ms</dd>
+        <dt>Model</dt><dd>{{.Model}}</dd>
+        <dt>Model requests</dt><dd>{{len .Requests}}/{{.RequestLimit}}</dd>
+      </dl>
+      <p class="muted">Request and lookup outcomes are metadata only. Questions, tool arguments, retrieved schema contents, answers and raw provider errors are not included. Diagnostics are not sent to the model.</p>
+      {{if $.DiagnosticJSON}}<h3>Request, response and network metadata</h3><pre>{{$.DiagnosticJSON}}</pre>{{end}}
+    </details>
+    {{end}}
     {{with .Evidence}}
     <section class="schema-evidence" aria-labelledby="evidence-title">
       <h2 id="evidence-title">Metadata retrieved for the latest answer</h2>

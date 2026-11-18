@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"tpt-graph/query-workspace/internal/modeldiag"
 	"tpt-graph/query-workspace/internal/schema"
 )
 
@@ -34,14 +35,15 @@ type modeState struct {
 }
 
 type browserSession struct {
-	id          string
-	lastUsed    time.Time
-	activeMode  InputMode
-	modes       map[InputMode]modeState
-	size        int
-	element     *list.Element
-	chat        []schema.Turn
-	chatVersion uint64
+	id              string
+	lastUsed        time.Time
+	activeMode      InputMode
+	modes           map[InputMode]modeState
+	size            int
+	element         *list.Element
+	chat            []schema.Turn
+	chatVersion     uint64
+	chatDiagnostics *modeldiag.Chat
 }
 
 // sessionStore keeps per-browser drafts and last runs in memory. Sessions expire after an idle
@@ -62,11 +64,12 @@ func newSessionStore(budget int, ttl time.Duration, now func() time.Time) *sessi
 
 // sessionView is a copy of a session's state, safe to use outside the store lock.
 type sessionView struct {
-	ID          string
-	ActiveMode  InputMode
-	Modes       map[InputMode]modeState
-	Chat        []schema.Turn
-	ChatVersion uint64
+	ID              string
+	ActiveMode      InputMode
+	Modes           map[InputMode]modeState
+	Chat            []schema.Turn
+	ChatVersion     uint64
+	ChatDiagnostics *modeldiag.Chat
 	// Ended is set when the browser presented a session the server no longer holds.
 	Ended bool
 }
@@ -158,12 +161,15 @@ func (b *browserSession) view() sessionView {
 		modes[mode] = state
 	}
 	return sessionView{ID: b.id, ActiveMode: b.activeMode, Modes: modes,
-		Chat: append([]schema.Turn(nil), b.chat...), ChatVersion: b.chatVersion}
+		Chat: append([]schema.Turn(nil), b.chat...), ChatVersion: b.chatVersion, ChatDiagnostics: b.chatDiagnostics}
 }
 
 // measure approximates retained bytes; it only needs to be proportionate for the memory budget.
 func (b *browserSession) measure() int {
 	size := 256
+	if diagnostics := b.chatDiagnostics; diagnostics != nil {
+		size += 4096 + 512*len(diagnostics.Requests) + 256*len(diagnostics.Attempts) + 128*diagnostics.LookupCount
+	}
 	for _, turn := range b.chat {
 		size += len(turn.Question) + len(turn.Reply.Text) + 256
 		for _, node := range turn.Reply.Evidence.Nodes {

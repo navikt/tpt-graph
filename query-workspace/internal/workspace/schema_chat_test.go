@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"tpt-graph/query-workspace/internal/modeldiag"
 	"tpt-graph/query-workspace/internal/schema"
 )
 
@@ -122,35 +123,127 @@ func (f schemaAssistantFunc) Chat(ctx context.Context, history []schema.Turn, qu
 	return f(ctx, history, question)
 }
 
+func TestSchemaChatDisplaysLatestDiagnosticsOnSuccessAndFailure(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "success", true: "failure"}[failed], func(t *testing.T) {
+			diagnostics := &modeldiag.Chat{
+				Diagnostics: modeldiag.Diagnostics{
+					TraceID: "chat-trace-123", Model: "chat-model", Outcome: "success", DurationMS: 123,
+				},
+				LookupLimit: 24, LookupCount: 2, RequestLimit: 25,
+				Requests: []*modeldiag.ChatRequest{{Number: 1}},
+			}
+			assistant := schemaAssistantFunc(func(_ context.Context, history []schema.Turn, _ string) (schema.Reply, error) {
+				for _, turn := range history {
+					if turn.Reply.Diagnostics != nil {
+						t.Error("display diagnostics must not be passed to the assistant as history")
+					}
+				}
+				reply := schema.Reply{Text: "Metadata answer", Diagnostics: diagnostics}
+				if failed {
+					diagnostics.Outcome = "lookup_budget"
+					return reply, &GenerationError{Kind: "lookup_budget", Message: "Lookup budget exhausted."}
+				}
+				return reply, nil
+			})
+			handler := NewHTTPHandler(NewService(testGenerator{}, &testExecutor{}, &testCatalog{}), nil, nil, assistant)
+			b := &browser{handler: handler, cookies: make(map[string]*http.Cookie)}
+			post := func() *httptest.ResponseRecorder {
+				r := httptest.NewRequest(http.MethodPost, "/schema/chat", strings.NewReader("question=branches"))
+				r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				w := httptest.NewRecorder()
+				b.ServeHTTP(w, r)
+				return w
+			}
+			response := post()
+			wantStatus := http.StatusOK
+			if failed {
+				wantStatus = http.StatusBadGateway
+			}
+			if response.Code != wantStatus {
+				t.Fatalf("unexpected status: %d %s", response.Code, response.Body)
+			}
+			for _, text := range []string{"Chat diagnostics", "chat-trace-123", "chat-model", "lookup_count", "requests", "Up to 24 lookups"} {
+				if !strings.Contains(response.Body.String(), text) {
+					t.Errorf("missing %q from chat diagnostics", text)
+				}
+			}
+			if failed && (strings.Contains(response.Body.String(), "Metadata answer") ||
+				!strings.Contains(response.Body.String(), `class="diagnostics" open`)) {
+				t.Fatal("failed chat displayed a partial answer or hid its diagnostics")
+			}
+			reload := httptest.NewRecorder()
+			b.ServeHTTP(reload, httptest.NewRequest(http.MethodGet, "/schema", nil))
+			if !strings.Contains(reload.Body.String(), "chat-trace-123") {
+				t.Fatal("reload lost the last attempt's diagnostics")
+			}
+			foreign := httptest.NewRecorder()
+			handler.ServeHTTP(foreign, httptest.NewRequest(http.MethodGet, "/schema", nil))
+			if strings.Contains(foreign.Body.String(), "chat-trace-123") {
+				t.Fatal("chat diagnostics leaked to another browser")
+			}
+			if !failed {
+				post()
+			}
+			reset := httptest.NewRecorder()
+			b.ServeHTTP(reset, httptest.NewRequest(http.MethodPost, "/schema/reset", nil))
+			afterReset := httptest.NewRecorder()
+			b.ServeHTTP(afterReset, httptest.NewRequest(http.MethodGet, "/schema", nil))
+			if strings.Contains(afterReset.Body.String(), "chat-trace-123") {
+				t.Fatal("reset retained old chat diagnostics")
+			}
+		})
+	}
+}
+
 func TestResetDuringSchemaChatDoesNotRestoreDiscardedConversation(t *testing.T) {
-	started, finish := make(chan struct{}), make(chan struct{})
-	assistant := schemaAssistantFunc(func(context.Context, []schema.Turn, string) (schema.Reply, error) {
-		close(started)
-		<-finish
-		return schema.Reply{Text: "discarded-answer"}, nil
-	})
-	handler := NewHTTPHandler(NewService(testGenerator{}, &testExecutor{}, &testCatalog{}), nil, nil, assistant)
-	home := httptest.NewRecorder()
-	handler.ServeHTTP(home, httptest.NewRequest(http.MethodGet, "/schema", nil))
-	cookie := home.Result().Cookies()[0]
-	chat := httptest.NewRequest(http.MethodPost, "/schema/chat", strings.NewReader("question=branches"))
-	chat.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	chat.AddCookie(cookie)
-	response := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		handler.ServeHTTP(response, chat)
-	}()
-	<-started
-	reset := httptest.NewRequest(http.MethodPost, "/schema/reset", nil)
-	reset.AddCookie(cookie)
-	resetResponse := httptest.NewRecorder()
-	handler.ServeHTTP(resetResponse, reset)
-	close(finish)
-	<-done
-	if resetResponse.Code != http.StatusSeeOther || response.Code != http.StatusConflict ||
-		strings.Contains(response.Body.String(), "discarded-answer") {
-		t.Fatalf("in-flight answer undid reset: reset=%d chat=%d %s", resetResponse.Code, response.Code, response.Body)
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{"success", nil},
+		{"failure", errors.New("discarded-error")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			started, finish := make(chan struct{}), make(chan struct{})
+			assistant := schemaAssistantFunc(func(context.Context, []schema.Turn, string) (schema.Reply, error) {
+				close(started)
+				<-finish
+				return schema.Reply{Text: "discarded-answer", Diagnostics: &modeldiag.Chat{
+					Diagnostics: modeldiag.Diagnostics{TraceID: "discarded-diagnostic"},
+				}}, test.err
+			})
+			handler := NewHTTPHandler(NewService(testGenerator{}, &testExecutor{}, &testCatalog{}), nil, nil, assistant)
+			home := httptest.NewRecorder()
+			handler.ServeHTTP(home, httptest.NewRequest(http.MethodGet, "/schema", nil))
+			cookie := home.Result().Cookies()[0]
+			chat := httptest.NewRequest(http.MethodPost, "/schema/chat", strings.NewReader("question=branches"))
+			chat.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			chat.AddCookie(cookie)
+			response := httptest.NewRecorder()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				handler.ServeHTTP(response, chat)
+			}()
+			<-started
+			reset := httptest.NewRequest(http.MethodPost, "/schema/reset", nil)
+			reset.AddCookie(cookie)
+			resetResponse := httptest.NewRecorder()
+			handler.ServeHTTP(resetResponse, reset)
+			close(finish)
+			<-done
+			if resetResponse.Code != http.StatusSeeOther || response.Code != http.StatusConflict ||
+				strings.Contains(response.Body.String(), "discarded-answer") || strings.Contains(response.Body.String(), "discarded-diagnostic") {
+				t.Fatalf("in-flight answer undid reset: reset=%d chat=%d", resetResponse.Code, response.Code)
+			}
+			reload := httptest.NewRequest(http.MethodGet, "/schema", nil)
+			reload.AddCookie(cookie)
+			reloaded := httptest.NewRecorder()
+			handler.ServeHTTP(reloaded, reload)
+			if strings.Contains(reloaded.Body.String(), "discarded-diagnostic") {
+				t.Fatal("in-flight diagnostics restored reset state")
+			}
+		})
 	}
 }
