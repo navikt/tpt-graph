@@ -255,16 +255,13 @@ func TestModelsNeverReceiveDatabaseResultsOrExecutionErrors(t *testing.T) {
 					fmt.Fprint(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"text":"{\"cypher\":\"RETURN 1\",\"parameters\":{}}"}]}}]}`)
 					return
 				}
-				switch chatRequests {
-				case 0:
+				if request["tools"] != nil {
+					t.Error("schema chat must not expose any tools")
+				}
+				if chatRequests == 0 {
 					fmt.Fprint(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"functionCall":{"name":"execute_cypher","args":{"query":"MATCH (n) RETURN n"}}}]}}]}`)
-				case 1:
-					if !strings.Contains(string(body), "unknown tool: only search_schema and inspect_node are available") {
-						t.Error("model's attempted data access was not explicitly rejected")
-					}
-					fmt.Fprint(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"functionCall":{"name":"search_schema","args":{"query":"branch"}}}]}}]}`)
-				default:
-					fmt.Fprint(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"text":"The snapshot includes GitHubBranch metadata only."}]}}]}`)
+				} else {
+					fmt.Fprint(w, chatModelResponse(`{"text":"The snapshot includes GitHubBranch metadata only.","labels":["GitHubBranch"]}`))
 				}
 				chatRequests++
 			}))
@@ -278,10 +275,15 @@ func TestModelsNeverReceiveDatabaseResultsOrExecutionErrors(t *testing.T) {
 					t.Fatalf("query execution changed: result=%#v error=%v", investigation.Result, err)
 				}
 			}
+			rejected, err := generator.Chat(context.Background(), nil, "Which schema types describe branches?")
+			var failure *workspace.GenerationError
+			if !errors.As(err, &failure) || failure.Kind != "unexpected_tool_call" || rejected.Text != "" {
+				t.Fatal("model-requested data access was not rejected without a partial answer")
+			}
 			if _, err := generator.Chat(context.Background(), nil, "Which schema types describe branches?"); err != nil {
 				t.Fatal(err)
 			}
-			if queryRequests != 2 || chatRequests != 3 || executor.calls != 2 {
+			if queryRequests != 2 || chatRequests != 2 || executor.calls != 2 {
 				t.Fatalf("unexpected model requests or model-triggered execution: queries=%d chat=%d executions=%d",
 					queryRequests, chatRequests, executor.calls)
 			}

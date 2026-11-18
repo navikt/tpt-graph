@@ -75,18 +75,23 @@ fields, and status messages do not rely on colour alone.
 ## Schema chat
 
 Open **Schema chat** (`GET /schema`) to explore what the cached schema contains.
-The assistant uses its own Vertex AI model setting, with two bounded tools:
-`search_schema` matches substrings in labels, property names and relationship
-types, and `inspect_node` retrieves an exact label and its directed one-hop
-schema neighbourhood. It receives retrieved metadata rather than the full
-schema. It has no Neo4j query tool and cannot retrieve records or property values.
+The assistant uses its own Vertex AI model setting and receives the complete
+cached schema in one model request per turn, including follow-ups. It has no
+tools and cannot retrieve records or property values. There is no discovery
+loop or automatic answer-repair request. Each turn has a 120-second safety
+deadline, not a latency target.
 
-Each answer requires a successful metadata lookup, even for follow-ups. A turn
-has a 120-second deadline, at most 24 tool calls and 25 model requests.
-Each tool result is limited to 24 types, 40 inferred relationships, 60 properties
-per type and 32 KiB encoded metadata. Truncation is explicit; narrower searches
-can focus the result. The latest answer's retrieved evidence is shown as a
-focused graph, property/type cards and a directed relationship list. The cards
+The model returns answer text and up to 24 exact node-label references.
+The application validates every reference against the current snapshot before
+displaying the answer. Unknown references or malformed responses fail the turn
+without exposing a partial answer. An empty reference list is allowed when
+no relevant type is present.
+
+The application builds evidence locally from referenced types and their directed
+one-hop schema neighbourhoods. It displays a focused graph, property/type cards
+and a directed relationship list. This view is limited to 24 types, 40 inferred
+relationships and 60 properties per type, with truncation shown explicitly.
+These display limits do not restrict the schema sent to the model. The cards
 and relationship list also work without JavaScript.
 
 The assistant must distinguish metadata from business meaning and coverage:
@@ -116,9 +121,10 @@ The application enforces this separation:
   The application validates and executes the generated Cypher separately; results,
   result graphs, and raw execution errors are never sent back to the model.
 - Chat receives the user's question, earlier schema-chat questions and answers,
-  and bounded metadata lookups. Its only tools are `search_schema` and
-  `inspect_node`; neither can query database records. Unknown tools are rejected.
-  Investigation results and hand-written Cypher drafts are not chat context.
+  and the full cached schema on every turn. It has no tools; any returned tool
+  call is rejected without execution. Evidence is derived locally from validated
+  label references, not model-generated graph metadata. Investigation results
+  and hand-written Cypher drafts are not chat context.
 - Schema discovery projects only metadata from the three fixed native schema
   procedures. It does not include sample records or property values. Failure
   never falls back to sampling data or giving the model database access.
@@ -163,20 +169,20 @@ Query generation and chat use independent model settings:
 | Schema chat | `VERTEX_CHAT_MODEL` | `gemini-3.8-flash` | MEDIUM | 16,384 |
 
 Changing `VERTEX_MODEL` does not change the chat model. Query generation has a
-45-second deadline. Chat has a separate 120-second deadline covering all model
-and tool rounds, not each request. The HTTP server write timeout is 150 seconds
-to allow the chat response to finish. Chat has a larger token budget to accommodate reasoning
-and its final answer; displayed answers remain limited to 16,000 bytes.
-Chat uses MEDIUM thinking to balance reasoning depth and latency. It does not
-guarantee faster answers, better quality or fewer requests.
+45-second deadline. Chat has a separate 120-second deadline covering schema
+loading and its single model request. The HTTP server write timeout is 150 seconds
+to allow the chat response to finish. Chat has a larger token budget to accommodate
+reasoning and its final answer; displayed answers remain limited to 16,000 bytes.
+Chat uses MEDIUM thinking. Supplying the full schema removes serial discovery
+rounds, but does not guarantee a particular response time or answer quality.
 No live-model quality or latency comparison is established by the automated
 tests, which use synthetic metadata and a local fake provider.
 
 Before changing models, confirm support for the configured EU endpoint, thinking
-level, function calling, and token budget. Do not silently fall back to a global
+level, structured JSON output, and token budget. Do not silently fall back to a global
 endpoint, another provider, or a weaker model. Compare configurations using
 schema-only questions and metadata, measuring grounded correctness, appropriate
-uncertainty, tool rounds, token use, timeouts, and end-to-end latency.
+uncertainty, token use, timeouts, and end-to-end latency.
 
 The defaults for `NEO4J_DATABASE`, query timeout, row cap, and result byte cap
 are configurable with `NEO4J_DATABASE`, `NEO4J_QUERY_TIMEOUT_SECONDS`,
@@ -287,20 +293,21 @@ measurements can be compared with the existing baseline.
 ### Schema chat diagnostics
 
 Schema chat displays diagnostics for the latest attempt, including failures.
-The panel opens automatically on failure and shows lookup/request budgets,
-lookup counts, elapsed time, model settings and the trace ID. Each model request
-records HTTP/API status, finish/block reasons, response IDs, reported token usage
-and network attempts. Lookup entries contain only the tool name, outcome,
-returned type counts and truncation status. Unknown tool names are recorded as
-`unknown`; tool arguments, retrieved schema contents, thought signatures,
-answers and raw provider errors are not included.
+The panel opens automatically on failure and shows the logical model request
+count, full-schema context mode, elapsed time, model settings and
+the trace ID. It records HTTP/API status, finish/block reasons, response IDs,
+reported token usage and network attempts. `schema_context: full` identifies the
+full-schema design; `model_requests` is one when a model request was attempted,
+or zero if validation or setup failed first. `schema_bytes` measures the cached
+snapshot; `system_instruction_bytes` includes the prompt and full schema.
+Questions, schema contents, thought signatures, answers and raw provider errors
+are not included.
 
-Top-level token usage sums the usage reported by individual requests.
-`usage_reported_requests` shows how many requests supplied usage; missing usage
-does not mean zero. Local deadlines, Google deadlines, lookup-budget exhaustion,
-blocked responses, token limits and unusable final answers have distinct outcomes.
+Missing token usage means it was not reported, not zero. Local deadlines,
+Google deadlines, blocked responses, token limits, unexpected tool calls and
+invalid schema references have distinct outcomes.
 The same diagnostics are recorded in the structured `schema chat completed` log
-under `chat`, with key outcome, timing, budget usage and token fields on the span.
+under `chat`, with key outcome, timing, request count and token fields on the span.
 
 The latest attempt's diagnostics remain in the private browser session under
 its existing expiry and memory budget, including after reload. Starting a new

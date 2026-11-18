@@ -16,39 +16,32 @@ const explorerFixture = "Node properties (observed in the database; properties m
 	"(:`GitHubRepository`)-[:`HAS_BRANCH`]->(:`GitHubBranch`)\n" +
 	"Metadata does not establish business meaning or prove an attack path.\n"
 
-func TestExplorerSearchAndInspectUseOnlyObservedMetadata(t *testing.T) {
+func TestEvidenceForLabelsUsesOnlyObservedMetadata(t *testing.T) {
 	index, err := NewIndex(explorerFixture)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	found, err := index.Search("branch")
+	detail, err := index.EvidenceForLabels([]string{"GitHubBranch", "GitHubBranch"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(found.Nodes) != 2 || len(found.Relationships) != 1 || found.Truncated {
-		t.Fatalf("search did not match labels, properties and relationship types: %#v", found)
-	}
-	detail, err := index.Inspect("GitHubBranch")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(detail.Nodes) != 2 || len(detail.Relationships) != 1 {
+	if len(detail.Nodes) != 2 || len(detail.Relationships) != 1 || detail.Truncated {
 		t.Fatalf("missing directed neighbourhood: %#v", detail)
 	}
 	edge := detail.Relationships[0]
 	if edge.Source != "GitHubRepository" || edge.Target != "GitHubBranch" || edge.Type != "HAS_BRANCH" || edge.Properties[0].Name != "lastupdated" {
 		t.Fatalf("lost direction or relationship properties: %#v", edge)
 	}
-	missing, err := index.Search("NoSuchService")
-	if err != nil || len(missing.Nodes) != 0 || len(missing.Relationships) != 0 {
-		t.Fatalf("invented absent metadata: %#v, %v", missing, err)
+	empty, err := index.EvidenceForLabels(nil)
+	if err != nil || len(empty.Nodes) != 0 || len(empty.Relationships) != 0 {
+		t.Fatalf("invented unreferenced metadata: %#v, %v", empty, err)
 	}
-	if _, err := index.Inspect("InventedLabel"); err == nil {
+	if invalid, err := index.EvidenceForLabels([]string{"GitHubBranch", "InventedLabel"}); err == nil || len(invalid.Nodes) != 0 {
 		t.Fatal("unknown labels must be reported explicitly")
 	}
-	if _, err := index.Search(strings.Repeat("x", 201)); err == nil {
-		t.Fatal("unbounded search accepted")
+	if _, err := index.EvidenceForLabels(make([]string, 25)); err == nil {
+		t.Fatal("unbounded references accepted")
 	}
 }
 
@@ -57,27 +50,30 @@ func TestExplorerHandlesEmptyRelationshipsEscapedNamesAndBounds(t *testing.T) {
 	for n := range 40 {
 		text += fmt.Sprintf("`Type%02d` {`name`: String}\n", n)
 	}
-	text += "\nRelationship properties (observed in the database):\n\n" +
-		"\nDirected relationships (metadata-inferred; not verified against actual edges):\n\n" +
-		"Metadata does not establish business meaning or prove an attack path.\n"
+	text += "\nRelationship properties (observed in the database):\n`LINK` {}\n" +
+		"\nDirected relationships (metadata-inferred; not verified against actual edges):\n"
+	for n := range 40 {
+		text += fmt.Sprintf("(:`odd``label`)-[:`LINK`]->(:`Type%02d`)\n", n)
+	}
+	text += "Metadata does not establish business meaning or prove an attack path.\n"
 	index, err := NewIndex(text)
 	if err != nil {
 		t.Fatal(err)
 	}
-	detail, err := index.Inspect("odd`label")
-	if err != nil || len(detail.Nodes) != 1 || detail.Nodes[0].Properties[0].Name != "a,b}" {
+	detail, err := index.EvidenceForLabels([]string{"odd`label", "Type39"})
+	if err != nil || len(detail.Nodes) != 24 || !detail.Truncated ||
+		detail.Nodes[0].Properties[0].Name != "a,b}" || detail.Nodes[1].Name != "Type39" {
 		t.Fatalf("escaped identifiers lost: %#v, %v", detail, err)
 	}
-	found, err := index.Search("Type")
-	if err != nil || !found.Truncated || len(found.Nodes) != 24 {
-		t.Fatalf("lookup was not explicitly bounded: %#v, %v", found, err)
+	if len(detail.Relationships) > 40 {
+		t.Fatal("evidence relationships were not bounded")
 	}
 	if _, err := NewIndex(strings.ReplaceAll(explorerFixture, "]->", "]--")); err == nil {
 		t.Fatal("malformed metadata must not become a partial schema")
 	}
 }
 
-func TestExplorerPreservesPropertyTruncationWhenCombiningToolEvidence(t *testing.T) {
+func TestEvidenceForLabelsPreservesPropertyTruncation(t *testing.T) {
 	var properties []string
 	for n := range 70 {
 		properties = append(properties, fmt.Sprintf("`property%02d`: String", n))
@@ -87,16 +83,11 @@ func TestExplorerPreservesPropertyTruncationWhenCombiningToolEvidence(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	found, err := index.Inspect("GitHubBranch")
+	found, err := index.EvidenceForLabels([]string{"GitHubBranch"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	combined := index.Merge(found, found)
-	if len(combined.Nodes) != 2 || !combined.Nodes[0].PropertiesTruncated || len(combined.Nodes[0].Properties) != 60 {
-		t.Fatalf("merged evidence hid truncation or duplicated metadata: %#v", combined)
-	}
-	found, err = index.Search("property69")
-	if err != nil || len(found.Nodes) != 1 || found.Nodes[0].Properties[0].Name != "property69" {
-		t.Fatalf("search hid the property that matched beyond the display limit: %#v, %v", found, err)
+	if len(found.Nodes) != 2 || !found.Nodes[0].PropertiesTruncated || len(found.Nodes[0].Properties) != 60 {
+		t.Fatalf("evidence hid property truncation: %#v", found)
 	}
 }

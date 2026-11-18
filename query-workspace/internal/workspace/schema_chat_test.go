@@ -130,8 +130,7 @@ func TestSchemaChatDisplaysLatestDiagnosticsOnSuccessAndFailure(t *testing.T) {
 				Diagnostics: modeldiag.Diagnostics{
 					TraceID: "chat-trace-123", Model: "chat-model", Outcome: "success", DurationMS: 123,
 				},
-				LookupLimit: 24, LookupCount: 2, RequestLimit: 25,
-				Requests: []*modeldiag.ChatRequest{{Number: 1}},
+				SchemaContext: "full", ModelRequests: 1,
 			}
 			assistant := schemaAssistantFunc(func(_ context.Context, history []schema.Turn, _ string) (schema.Reply, error) {
 				for _, turn := range history {
@@ -141,8 +140,8 @@ func TestSchemaChatDisplaysLatestDiagnosticsOnSuccessAndFailure(t *testing.T) {
 				}
 				reply := schema.Reply{Text: "Metadata answer", Diagnostics: diagnostics}
 				if failed {
-					diagnostics.Outcome = "lookup_budget"
-					return reply, &GenerationError{Kind: "lookup_budget", Message: "Lookup budget exhausted."}
+					diagnostics.Outcome = "invalid_response"
+					return reply, &GenerationError{Kind: "invalid_response", Message: "The assistant returned an unusable answer."}
 				}
 				return reply, nil
 			})
@@ -163,10 +162,13 @@ func TestSchemaChatDisplaysLatestDiagnosticsOnSuccessAndFailure(t *testing.T) {
 			if response.Code != wantStatus {
 				t.Fatalf("unexpected status: %d %s", response.Code, response.Body)
 			}
-			for _, text := range []string{"Chat diagnostics", "chat-trace-123", "chat-model", "lookup_count", "requests", "Up to 24 lookups"} {
+			for _, text := range []string{"Chat diagnostics", "chat-trace-123", "chat-model", "schema_context", "model_requests", "Full cached schema"} {
 				if !strings.Contains(response.Body.String(), text) {
 					t.Errorf("missing %q from chat diagnostics", text)
 				}
+			}
+			if strings.Contains(response.Body.String(), "lookup_count") || strings.Contains(response.Body.String(), "Up to 24 lookups") {
+				t.Error("chat still advertises the removed lookup loop")
 			}
 			if failed && (strings.Contains(response.Body.String(), "Metadata answer") ||
 				!strings.Contains(response.Body.String(), `class="diagnostics" open`)) {

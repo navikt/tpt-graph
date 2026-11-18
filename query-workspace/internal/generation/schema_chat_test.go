@@ -27,131 +27,151 @@ const chatSchema = "Node properties (observed in the database; properties may be
 	"(:`GitHubRepository`)-[:`BRANCH`]->(:`GitHubBranch`)\n" +
 	"Metadata does not establish business meaning or prove an attack path.\n"
 
-func TestSchemaChatExploresMetadataWithToolsWithoutFullSchemaPrompt(t *testing.T) {
+func TestSchemaChatAnswersFromFullSchemaInOneRequest(t *testing.T) {
 	requests := 0
+	answer := "The snapshot includes GitHubBranch and a metadata-inferred BRANCH relationship."
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
 		if !strings.Contains(r.URL.Path, "/models/test-chat-model:generateContent") {
 			t.Errorf("chat did not use its independent model: %s", r.URL.Path)
 		}
-		var request map[string]any
+		var request struct {
+			SystemInstruction *genai.Content
+			Contents          []*genai.Content
+			Tools             []*genai.Tool
+			ToolConfig        *genai.ToolConfig
+			GenerationConfig  genai.GenerateContentConfig
+		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
+			return
 		}
 		body, _ := json.Marshal(request)
-		var declared struct {
-			Tools []*genai.Tool
+		if len(request.Tools) != 0 || request.ToolConfig != nil {
+			t.Error("full-schema chat must not expose any tools")
 		}
-		if err := json.Unmarshal(body, &declared); err != nil {
-			t.Error(err)
+		if request.SystemInstruction == nil || len(request.SystemInstruction.Parts) == 0 ||
+			!strings.Contains(request.SystemInstruction.Parts[0].Text, chatSchema) {
+			t.Error("the first request must include the complete cached schema")
 		}
-		if len(declared.Tools) != 1 || len(declared.Tools[0].FunctionDeclarations) != 2 ||
-			declared.Tools[0].FunctionDeclarations[0].Name != "search_schema" ||
-			declared.Tools[0].FunctionDeclarations[1].Name != "inspect_node" {
-			t.Error("chat must expose only the two metadata tools")
-		}
-		if !strings.Contains(string(body), `"thinkingLevel":"MEDIUM"`) {
+		config := request.GenerationConfig
+		if config.ThinkingConfig == nil || config.ThinkingConfig.ThinkingLevel != genai.ThinkingLevelMedium {
 			t.Error("chat must use medium thinking on every model request")
 		}
-		if !strings.Contains(string(body), `"maxOutputTokens":16384`) {
-			t.Error("chat must reserve room for reasoning and the final answer")
+		if config.MaxOutputTokens != 16384 || config.ResponseMIMEType != "application/json" || config.ResponseSchema == nil {
+			t.Error("chat must request a bounded structured answer with schema references")
 		}
-		if strings.Contains(string(body), "UnrelatedCloudType") || strings.Contains(string(body), "private-history-diagnostics") ||
-			!strings.Contains(string(body), "earlier-question") {
-			t.Errorf("full schema leaked or conversation was lost: %s", body)
+		if len(request.Contents) != 3 || !strings.Contains(string(body), "earlier-question") ||
+			!strings.Contains(string(body), "Do we have branch information?") {
+			t.Error("conversation or current question was lost")
 		}
-		if requests == 0 && !strings.Contains(string(body), `"mode":"ANY"`) {
-			t.Error("initial answer must require metadata retrieval")
+		for _, private := range []string{"private-history-diagnostics", "private-result-marker"} {
+			if strings.Contains(string(body), private) {
+				t.Errorf("non-conversation context reached the model: %s", private)
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		switch requests {
-		case 0:
-			fmt.Fprint(w, `{"modelVersion":"chat-version","responseId":"response-1","usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2,"thoughtsTokenCount":3,"totalTokenCount":15},"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"functionCall":{"name":"search_schema","args":{"query":"branch"}},"thoughtSignature":"c2lnbmF0dXJl"}]}}]}`)
-		case 1:
-			if !strings.Contains(string(body), "functionResponse") || !strings.Contains(string(body), "GitHubBranch") || !strings.Contains(string(body), "c2lnbmF0dXJl") {
-				t.Error("lookup result or model thought signature was lost")
-			}
-			fmt.Fprint(w, `{"modelVersion":"chat-version","responseId":"response-2","usageMetadata":{"promptTokenCount":20,"candidatesTokenCount":4,"thoughtsTokenCount":6,"totalTokenCount":30},"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"functionCall":{"name":"inspect_node","args":{"name":"GitHubBranch"}}}]}}]}`)
-		default:
-			fmt.Fprint(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"text":"The snapshot includes GitHubBranch and a metadata-inferred BRANCH relationship."}]}}]}`)
-		}
-		requests++
+		fmt.Fprintf(w, `{"modelVersion":"chat-version","responseId":"response-1","usageMetadata":{"promptTokenCount":120,"candidatesTokenCount":25,"thoughtsTokenCount":10,"totalTokenCount":155},"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"text":%q}]}}]}`,
+			fmt.Sprintf(`{"text":%q,"labels":["GitHubBranch"]}`, answer))
 	}))
 	defer server.Close()
 	captured := time.Now().UTC()
-	generator := chatGenerator(t, server, schema.Snapshot{Text: chatSchema, CapturedAt: captured})
+	generator := chatGenerator(t, server, schema.Snapshot{Text: chatSchema, Hash: "schema-hash", CapturedAt: captured})
+	var logs bytes.Buffer
+	generator.logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	reply, err := generator.Chat(context.Background(), []schema.Turn{
 		{Question: "earlier-question", Reply: schema.Reply{Text: "Earlier answer.",
+			Evidence:    schema.Evidence{Nodes: []schema.NodeType{{Name: "private-result-marker"}}},
 			Diagnostics: &modeldiag.Chat{Diagnostics: modeldiag.Diagnostics{TraceID: "private-history-diagnostics"}}}},
 	}, "Do we have branch information?")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if requests != 3 || !strings.Contains(reply.Text, "GitHubBranch") || len(reply.Evidence.Nodes) != 2 ||
+	if requests != 1 || reply.Text != answer || len(reply.Evidence.Nodes) != 2 ||
 		len(reply.Evidence.Relationships) != 1 || !reply.CapturedAt.Equal(captured) {
 		t.Fatalf("ungrounded or incomplete answer: requests=%d reply=%#v", requests, reply)
 	}
 	d := reply.Diagnostics
-	if d == nil || d.ThinkingLevel != "MEDIUM" || d.Outcome != "success" || d.LookupCount != 2 || d.HistoryTurns != 1 || len(d.Requests) != 3 ||
-		len(d.Attempts) != 3 || d.DurationMS <= 0 || d.SchemaCaptured == nil || !d.SchemaCaptured.Equal(captured) {
+	if d == nil || d.ThinkingLevel != "MEDIUM" || d.Outcome != "success" || d.HistoryTurns != 1 || d.ModelRequests != 1 || d.SchemaContext != "full" ||
+		len(d.Attempts) != 1 || d.DurationMS <= 0 || d.SchemaCaptured == nil || !d.SchemaCaptured.Equal(captured) ||
+		d.SchemaBytes != len(chatSchema) || d.SchemaHash != "schema-hash" || d.SystemBytes <= len(chatSchema) {
 		t.Fatalf("missing chat diagnostics: %#v", d)
 	}
-	if d.Usage == nil || d.Usage.TotalTokens != 45 || d.Usage.ThinkingTokens != 9 || d.UsageRequests != 2 ||
-		d.Requests[0].Usage.TotalTokens != 15 || d.Requests[1].Usage.TotalTokens != 30 || d.Requests[2].Usage != nil {
-		t.Fatalf("per-request usage lost or missing usage reported as zero: %#v", d)
+	if d.Usage == nil || d.Usage.TotalTokens != 155 || d.Usage.ThinkingTokens != 10 ||
+		d.ModelVersion != "chat-version" || d.ResponseID != "response-1" || d.HTTPStatus != 200 {
+		t.Fatalf("response diagnostics lost: %#v", d)
 	}
-	for i, tool := range []string{"search_schema", "inspect_node"} {
-		request := d.Requests[i]
-		if request.Number != i+1 || request.HTTPStatus != 200 || request.ResponseID != fmt.Sprintf("response-%d", i+1) ||
-			request.ModelVersion != "chat-version" || len(request.Lookups) != 1 || request.Lookups[0].Tool != tool ||
-			request.Lookups[0].Outcome != "success" || request.Lookups[0].Nodes == 0 || request.DurationMS <= 0 {
-			t.Fatalf("missing request or lookup diagnostics: %#v", request)
+	encoded, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, private := range []string{"GitHubBranch", "UnrelatedCloudType", "earlier-question", answer} {
+		if strings.Contains(string(encoded), private) || strings.Contains(logs.String(), private) {
+			t.Errorf("content leaked into diagnostics: %s", private)
 		}
 	}
 }
 
-func TestSchemaChatAnswersAfterTwentyFourLookups(t *testing.T) {
-	for _, batchSize := range []int{1, 8} {
-		t.Run(fmt.Sprintf("batch_size_%d", batchSize), func(t *testing.T) {
-			lookups, requests := 0, 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				var request struct {
-					ToolConfig *genai.ToolConfig
-				}
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					t.Error(err)
-					return
-				}
-				requests++
-				w.Header().Set("Content-Type", "application/json")
-				if lookups == 24 {
-					if request.ToolConfig == nil || request.ToolConfig.FunctionCallingConfig == nil ||
-						request.ToolConfig.FunctionCallingConfig.Mode != genai.FunctionCallingConfigModeNone {
-						t.Error("exhausted lookup budget must require a final answer without more tools")
-					}
-					fmt.Fprint(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"text":"The snapshot includes GitHubBranch."}]}}]}`)
-					return
-				}
-				if request.ToolConfig != nil && request.ToolConfig.FunctionCallingConfig != nil &&
-					request.ToolConfig.FunctionCallingConfig.Mode == genai.FunctionCallingConfigModeNone {
-					t.Error("metadata tools disabled before the lookup budget was exhausted")
-				}
-				parts := make([]string, batchSize)
-				for i := range parts {
-					parts[i] = `{"functionCall":{"name":"search_schema","args":{"query":"branch"}}}`
-				}
-				lookups += batchSize
-				fmt.Fprintf(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[%s]}}]}`, strings.Join(parts, ","))
-			}))
-			defer server.Close()
+func TestSchemaChatFollowUpUsesCurrentFullSnapshot(t *testing.T) {
+	requests := 0
+	updated := strings.ReplaceAll(chatSchema, "GitHubBranch", "NewBranch")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			SystemInstruction *genai.Content
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		snapshot, label := chatSchema, "GitHubBranch"
+		if requests > 0 {
+			snapshot, label = updated, "NewBranch"
+		}
+		if request.SystemInstruction == nil || len(request.SystemInstruction.Parts) == 0 ||
+			!strings.Contains(request.SystemInstruction.Parts[0].Text, snapshot) {
+			t.Error("follow-up did not receive the current full schema")
+		}
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, chatModelResponse(fmt.Sprintf(`{"text":"Metadata answer","labels":[%q]}`, label)))
+	}))
+	defer server.Close()
+	provider := &testSchemaProvider{snapshot: schema.Snapshot{Text: chatSchema, Hash: "first"}}
+	generator := chatGenerator(t, server, provider.snapshot)
+	generator.schemas = provider
+	first, err := generator.Chat(context.Background(), nil, "branches?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.snapshot = schema.Snapshot{Text: updated, Hash: "second"}
+	second, err := generator.Chat(context.Background(), []schema.Turn{{Question: "branches?", Reply: first}}, "What changed?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 || second.Diagnostics.SchemaHash != "second" || len(second.Evidence.Nodes) != 2 ||
+		second.Evidence.Nodes[0].Name != "NewBranch" {
+		t.Fatal("follow-up reused stale metadata or required extra model requests")
+	}
+}
 
-			reply, err := chatGenerator(t, server, schema.Snapshot{Text: chatSchema}).Chat(context.Background(), nil, "Explore branch metadata")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if requests != 24/batchSize+1 || lookups != 24 || !strings.Contains(reply.Text, "GitHubBranch") || len(reply.Evidence.Nodes) == 0 {
-				t.Fatalf("missing metadata-grounded answer: requests=%d lookups=%d reply=%#v", requests, lookups, reply)
-			}
-		})
+func TestSchemaChatAllowsAnswersWithoutMatchingTypes(t *testing.T) {
+	requests := 0
+	answer := "No relevant types were found in this snapshot; that does not establish source-system coverage."
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, chatModelResponse(fmt.Sprintf(`{"text":%q,"labels":[]}`, answer)))
+	}))
+	defer server.Close()
+	reply, err := chatGenerator(t, server, schema.Snapshot{Text: chatSchema}).Chat(context.Background(), nil, "Do we have an absent type?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 || reply.Text != answer || len(reply.Evidence.Nodes) != 0 || len(reply.Evidence.Relationships) != 0 {
+		t.Fatalf("answer without matching metadata was lost: %#v", reply)
+	}
+	if reply.Diagnostics == nil || reply.Diagnostics.Usage != nil {
+		t.Fatal("missing usage must remain unreported rather than counted as zero")
 	}
 }
 
@@ -172,11 +192,7 @@ func TestSchemaChatUsesLongerDeadlineWithoutExtendingCallerDeadline(t *testing.T
 					t.Errorf("unexpected SDK server timeout: %q, want %d-%d seconds", r.Header.Get("X-Server-Timeout"), test.minSeconds, test.maxSeconds)
 				}
 				w.Header().Set("Content-Type", "application/json")
-				if requests == 0 {
-					fmt.Fprint(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"functionCall":{"name":"search_schema","args":{"query":"branch"}}}]}}]}`)
-				} else {
-					fmt.Fprint(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"text":"The snapshot includes GitHubBranch."}]}}]}`)
-				}
+				fmt.Fprint(w, chatModelResponse(`{"text":"The snapshot includes GitHubBranch.","labels":["GitHubBranch"]}`))
 				requests++
 			}))
 			defer server.Close()
@@ -186,11 +202,15 @@ func TestSchemaChatUsesLongerDeadlineWithoutExtendingCallerDeadline(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			if requests != 2 || reply.Diagnostics == nil || reply.Diagnostics.TimeoutSeconds != 120 {
+			if requests != 1 || reply.Diagnostics == nil || reply.Diagnostics.TimeoutSeconds != 120 {
 				t.Fatal("chat deadline was not applied and reported consistently")
 			}
 		})
 	}
+}
+
+func chatModelResponse(text string) string {
+	return fmt.Sprintf(`{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"text":%q}]}}]}`, text)
 }
 
 func chatGenerator(t *testing.T, server *httptest.Server, snapshot schema.Snapshot) *VertexGenerator {
@@ -208,18 +228,24 @@ func chatGenerator(t *testing.T, server *httptest.Server, snapshot schema.Snapsh
 	return generator
 }
 
-func TestSchemaChatRejectsUngroundedBlockedAndRunawayResponses(t *testing.T) {
+func TestSchemaChatRejectsUnusableResponsesWithoutRetry(t *testing.T) {
 	for _, test := range []struct {
-		name, response string
-		wantRequests   int
-		outcome        string
-		lookups        int
+		name, response, outcome string
 	}{
-		{"ungrounded", `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"text":"Invented answer"}]}}]}`, 1, "ungrounded_answer", 0},
-		{"truncated", `{"candidates":[{"finishReason":"MAX_TOKENS","content":{"role":"model","parts":[{"text":"Partial answer"}]}}]}`, 1, "output_limit", 0},
-		{"blocked", `{"promptFeedback":{"blockReason":"SAFETY"}}`, 1, "blocked", 0},
-		{"runaway", `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"functionCall":{"name":"search_schema","args":{"query":"branch"}}}]}}]}`, 25, "lookup_budget", 24},
-		{"query tool unavailable", `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"functionCall":{"name":"execute_cypher","args":{"query":"MATCH (n) RETURN n"}}}]}}]}`, 24, "metadata_budget", 24},
+		{"unstructured", chatModelResponse("Invented answer"), "invalid_response"},
+		{"truncated", `{"candidates":[{"finishReason":"MAX_TOKENS","content":{"role":"model","parts":[{"text":"Partial answer"}]}}]}`, "output_limit"},
+		{"blocked prompt", `{"promptFeedback":{"blockReason":"SAFETY"}}`, "blocked"},
+		{"blocked candidate", `{"candidates":[{"finishReason":"SAFETY"}]}`, "blocked"},
+		{"no candidates", `{}`, "empty_response"},
+		{"incomplete", `{"candidates":[{"finishReason":"OTHER","content":{"role":"model","parts":[{"text":"Partial answer"}]}}]}`, "incomplete"},
+		{"discovery tool unavailable", `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"functionCall":{"name":"search_schema","args":{"query":"branch"}}}]}}]}`, "unexpected_tool_call"},
+		{"query tool unavailable", `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"functionCall":{"name":"execute_cypher","args":{"query":"MATCH (n) RETURN n"}}}]}}]}`, "unexpected_tool_call"},
+		{"unknown label", chatModelResponse(`{"text":"Invented answer","labels":["GitHubBranch","InventedLabel"]}`), "invalid_references"},
+		{"missing references", chatModelResponse(`{"text":"Unreferenced answer"}`), "invalid_response"},
+		{"null references", chatModelResponse(`{"text":"Unreferenced answer","labels":null}`), "invalid_response"},
+		{"invented properties", chatModelResponse(`{"text":"Answer","labels":["GitHubBranch"],"properties":{"name":"private-value"}}`), "invalid_response"},
+		{"trailing content", chatModelResponse(`{"text":"Answer","labels":[]} {}`), "invalid_response"},
+		{"too many references", chatModelResponse(`{"text":"Answer","labels":[` + strings.Repeat(`"GitHubBranch",`, 24) + `"GitHubBranch"]}`), "invalid_references"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			requests := 0
@@ -230,16 +256,12 @@ func TestSchemaChatRejectsUngroundedBlockedAndRunawayResponses(t *testing.T) {
 			}))
 			defer server.Close()
 			reply, err := chatGenerator(t, server, schema.Snapshot{Text: chatSchema}).Chat(context.Background(), nil, "branches?")
-			if err == nil || reply.Text != "" || len(reply.Evidence.Nodes) != 0 || requests != test.wantRequests {
+			if err == nil || reply.Text != "" || len(reply.Evidence.Nodes) != 0 || requests != 1 {
 				t.Fatalf("unsafe or partial response: reply=%#v error=%v requests=%d", reply, err, requests)
 			}
 			d := reply.Diagnostics
-			if d == nil || d.Outcome != test.outcome || d.LookupCount != test.lookups || len(d.Requests) != requests {
+			if d == nil || d.Outcome != test.outcome || len(d.Attempts) != 1 {
 				t.Fatalf("failure diagnostics lost: %#v", d)
-			}
-			if test.name == "query tool unavailable" && (len(d.Requests[0].Lookups) != 1 ||
-				d.Requests[0].Lookups[0].Tool != "unknown" || d.Requests[0].Lookups[0].Outcome != "rejected") {
-				t.Fatal("rejected tool lookup was not safely recorded")
 			}
 		})
 	}
@@ -255,6 +277,7 @@ func TestSchemaChatFailsWithoutMetadataBeforeContactingVertex(t *testing.T) {
 	for _, provider := range []*testSchemaProvider{
 		{err: schema.ErrUnavailable},
 		{snapshot: schema.Snapshot{Text: "malformed schema"}},
+		{snapshot: schema.Snapshot{Text: strings.Repeat("x", schema.MaxBytes+1)}},
 	} {
 		generator := chatGenerator(t, server, schema.Snapshot{})
 		generator.schemas = provider
@@ -315,7 +338,7 @@ func TestSchemaChatRetainsDiagnosticsOnProviderTimeout(t *testing.T) {
 	}
 	d := reply.Diagnostics
 	if d == nil || d.Outcome != "upstream_timeout" || d.HTTPStatus != 504 || d.APIStatus != "DEADLINE_EXCEEDED" ||
-		len(d.Requests) != 1 || d.Requests[0].HTTPStatus != 504 || len(d.Attempts) != 1 || d.Attempts[0].RequestID != "chat-request-123" {
+		d.ModelRequests != 1 || len(d.Attempts) != 1 || d.Attempts[0].RequestID != "chat-request-123" {
 		t.Fatalf("timeout diagnostics lost: %s", encoded)
 	}
 	if reply.Text != "" || len(reply.Evidence.Nodes) != 0 {
@@ -369,7 +392,7 @@ func TestSchemaChatDistinguishesLocalTimeoutCancellationAndNetworkFailure(t *tes
 	}
 }
 
-func TestSchemaChatIdentifiesUnusableAnswerAfterSuccessfulLookup(t *testing.T) {
+func TestSchemaChatIdentifiesUnusableAnswerText(t *testing.T) {
 	for _, test := range []struct {
 		text, outcome string
 	}{
@@ -380,18 +403,14 @@ func TestSchemaChatIdentifiesUnusableAnswerAfterSuccessfulLookup(t *testing.T) {
 			requests := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				if requests == 0 {
-					fmt.Fprint(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"functionCall":{"name":"search_schema","args":{"query":"branch"}}}]}}]}`)
-				} else {
-					fmt.Fprintf(w, `{"candidates":[{"finishReason":"STOP","content":{"role":"model","parts":[{"text":%q}]}}]}`, test.text)
-				}
+				fmt.Fprint(w, chatModelResponse(fmt.Sprintf(`{"text":%q,"labels":["GitHubBranch"]}`, test.text)))
 				requests++
 			}))
 			defer server.Close()
 			reply, err := chatGenerator(t, server, schema.Snapshot{Text: chatSchema}).Chat(context.Background(), nil, "branches?")
 			d := reply.Diagnostics
 			if err == nil || reply.Text != "" || len(reply.Evidence.Nodes) != 0 || d == nil || d.Outcome != test.outcome ||
-				d.LookupCount != 1 || len(d.Requests) != 2 || d.Requests[1].ToolMode != "AUTO" {
+				requests != 1 {
 				t.Fatalf("unusable answer was not diagnosed without partial evidence: error=%v diagnostics=%#v", err, d)
 			}
 		})

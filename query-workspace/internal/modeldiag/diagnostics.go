@@ -54,35 +54,7 @@ type HTTPAttempt struct {
 
 type Chat struct {
 	Diagnostics
-	HistoryTurns  int            `json:"history_turns"`
-	LookupLimit   int            `json:"lookup_limit"`
-	LookupCount   int            `json:"lookup_count"`
-	RequestLimit  int            `json:"request_limit"`
-	UsageRequests int            `json:"usage_reported_requests"`
-	Requests      []*ChatRequest `json:"requests"`
-}
-
-type ChatRequest struct {
-	Number           int           `json:"number"`
-	DurationMS       float64       `json:"duration_ms"`
-	ToolMode         string        `json:"tool_mode"`
-	RequestedLookups int           `json:"requested_lookups"`
-	HTTPStatus       int           `json:"http_status,omitempty"`
-	APIStatus        string        `json:"api_status,omitempty"`
-	ModelVersion     string        `json:"model_version,omitempty"`
-	ResponseID       string        `json:"response_id,omitempty"`
-	CandidateCount   *int          `json:"candidate_count,omitempty"`
-	FinishReason     string        `json:"finish_reason,omitempty"`
-	BlockReason      string        `json:"block_reason,omitempty"`
-	Usage            *Usage        `json:"usage,omitempty"`
-	Attempts         []HTTPAttempt `json:"http_attempts"`
-	Lookups          []ChatLookup  `json:"lookups,omitempty"`
-}
-
-type ChatLookup struct {
-	Tool          string `json:"tool"`
-	Outcome       string `json:"outcome"`
-	Nodes         int    `json:"node_types"`
-	Relationships int    `json:"relationship_types"`
-	Truncated     bool   `json:"truncated"`
+	HistoryTurns  int    `json:"history_turns"`
+	ModelRequests int    `json:"model_requests"`
+	SchemaContext string `json:"schema_context"`
 }

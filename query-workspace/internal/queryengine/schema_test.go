@@ -92,7 +92,7 @@ func TestNativeSchemaCapturesPropertiesAndInferredDirections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("native snapshot is not usable by the schema explorer: %v", err)
 	}
-	evidence, err := index.Inspect("GitHubRepository")
+	evidence, err := index.EvidenceForLabels([]string{"GitHubRepository"})
 	if err != nil || len(evidence.Relationships) != 1 || evidence.Relationships[0].Target != "Dependency" {
 		t.Fatalf("schema explorer lost native metadata: %#v, %v", evidence, err)
 	}

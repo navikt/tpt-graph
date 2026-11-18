@@ -12,12 +12,12 @@ import (
 )
 
 const (
-	MaxChatTurns           = 8
-	MaxQuestionBytes       = 4000
-	maxLookupNodes         = 24
-	maxLookupRelationships = 40
-	maxLookupProperties    = 60
-	quotedName             = "`(?:[^`]|``)+`"
+	MaxChatTurns             = 8
+	MaxQuestionBytes         = 4000
+	maxEvidenceNodes         = 24
+	maxEvidenceRelationships = 40
+	maxEvidenceProperties    = 60
+	quotedName               = "`(?:[^`]|``)+`"
 )
 
 type Property struct {
@@ -159,65 +159,29 @@ func unquoteName(text string) string {
 	return strings.ReplaceAll(text[1:len(text)-1], "``", "`")
 }
 
-// Search matches case-insensitive substrings in labels, property names and edge types.
-func (i *Index) Search(query string) (Evidence, error) {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" || len(query) > 200 {
-		return Evidence{}, errors.New("schema search requires between 1 and 200 bytes")
+func (i *Index) EvidenceForLabels(labels []string) (Evidence, error) {
+	if len(labels) > maxEvidenceNodes {
+		return Evidence{}, errors.New("too many schema label references")
 	}
 	evidence := Evidence{}
-	for _, node := range i.nodes {
-		if matchesMetadata(query, node.Name, node.Properties) {
-			node.Properties = matchingPropertiesFirst(node.Properties, query)
-			evidence.Nodes = append(evidence.Nodes, node)
+	selected := make(map[string]bool, len(labels))
+	for _, label := range labels {
+		if selected[label] {
+			continue
+		}
+		for _, node := range i.nodes {
+			if node.Name == label {
+				evidence.Nodes = append(evidence.Nodes, node)
+				selected[label] = true
+				break
+			}
+		}
+		if !selected[label] {
+			return Evidence{}, fmt.Errorf("node type %q was not found in this schema snapshot", label)
 		}
 	}
 	for _, rel := range i.relationships {
-		if matchesMetadata(query, rel.Type, rel.Properties) {
-			rel.Properties = matchingPropertiesFirst(rel.Properties, query)
-			evidence.Relationships = append(evidence.Relationships, rel)
-		}
-	}
-	return i.bound(evidence), nil
-}
-
-func matchingPropertiesFirst(properties []Property, query string) []Property {
-	if len(properties) <= maxLookupProperties {
-		return properties
-	}
-	properties = append([]Property(nil), properties...)
-	sort.SliceStable(properties, func(i, j int) bool {
-		return strings.Contains(strings.ToLower(properties[i].Name), query) &&
-			!strings.Contains(strings.ToLower(properties[j].Name), query)
-	})
-	return properties
-}
-
-func matchesMetadata(query, name string, properties []Property) bool {
-	if strings.Contains(strings.ToLower(name), query) {
-		return true
-	}
-	for _, property := range properties {
-		if strings.Contains(strings.ToLower(property.Name), query) {
-			return true
-		}
-	}
-	return false
-}
-
-func (i *Index) Inspect(name string) (Evidence, error) {
-	evidence := Evidence{}
-	for _, node := range i.nodes {
-		if node.Name == name {
-			evidence.Nodes = append(evidence.Nodes, node)
-			break
-		}
-	}
-	if len(evidence.Nodes) == 0 {
-		return Evidence{}, fmt.Errorf("node type %q was not found in this schema snapshot", name)
-	}
-	for _, rel := range i.relationships {
-		if rel.Source == name || rel.Target == name {
+		if selected[rel.Source] || selected[rel.Target] {
 			evidence.Relationships = append(evidence.Relationships, rel)
 		}
 	}
@@ -225,11 +189,8 @@ func (i *Index) Inspect(name string) (Evidence, error) {
 }
 
 func (i *Index) bound(evidence Evidence) Evidence {
-	if len(evidence.Nodes) > maxLookupNodes {
-		evidence.Nodes, evidence.Truncated = evidence.Nodes[:maxLookupNodes], true
-	}
-	if len(evidence.Relationships) > maxLookupRelationships {
-		evidence.Relationships, evidence.Truncated = evidence.Relationships[:maxLookupRelationships], true
+	if len(evidence.Relationships) > maxEvidenceRelationships {
+		evidence.Relationships, evidence.Truncated = evidence.Relationships[:maxEvidenceRelationships], true
 	}
 	names := map[string]bool{}
 	for _, node := range evidence.Nodes {
@@ -244,25 +205,25 @@ func (i *Index) bound(evidence Evidence) Evidence {
 		if !names[rel.Target] && rel.Target != rel.Source {
 			needed++
 		}
-		if len(names)+needed > maxLookupNodes {
+		if len(names)+needed > maxEvidenceNodes {
 			evidence.Truncated = true
 			continue
 		}
 		names[rel.Source], names[rel.Target] = true, true
-		rel.Properties, rel.PropertiesTruncated = boundedProperties(rel.Properties, rel.PropertiesTruncated)
+		rel.Properties, rel.PropertiesTruncated = boundedProperties(rel.Properties)
 		relationships = append(relationships, rel)
 	}
 	evidence.Relationships = relationships
 	nodes := make([]NodeType, 0, len(names))
-	// Keep the explicitly inspected node first.
+	// Keep referenced types ahead of their neighbours when limiting the display.
 	for _, node := range evidence.Nodes {
-		node.Properties, node.PropertiesTruncated = boundedProperties(node.Properties, node.PropertiesTruncated)
+		node.Properties, node.PropertiesTruncated = boundedProperties(node.Properties)
 		nodes = append(nodes, node)
 		delete(names, node.Name)
 	}
 	for _, node := range i.nodes {
 		if names[node.Name] {
-			node.Properties, node.PropertiesTruncated = boundedProperties(node.Properties, node.PropertiesTruncated)
+			node.Properties, node.PropertiesTruncated = boundedProperties(node.Properties)
 			nodes = append(nodes, node)
 		}
 	}
@@ -270,31 +231,9 @@ func (i *Index) bound(evidence Evidence) Evidence {
 	return evidence
 }
 
-func boundedProperties(properties []Property, truncated bool) ([]Property, bool) {
-	if len(properties) > maxLookupProperties {
-		return properties[:maxLookupProperties], true
+func boundedProperties(properties []Property) ([]Property, bool) {
+	if len(properties) > maxEvidenceProperties {
+		return properties[:maxEvidenceProperties], true
 	}
-	return properties, truncated
-}
-
-func (i *Index) Merge(first, second Evidence) Evidence {
-	evidence := Evidence{Truncated: first.Truncated || second.Truncated}
-	nodes := map[string]bool{}
-	relationships := map[[3]string]bool{}
-	for _, part := range []Evidence{first, second} {
-		for _, node := range part.Nodes {
-			if !nodes[node.Name] {
-				nodes[node.Name] = true
-				evidence.Nodes = append(evidence.Nodes, node)
-			}
-		}
-		for _, rel := range part.Relationships {
-			key := [3]string{rel.Source, rel.Type, rel.Target}
-			if !relationships[key] {
-				relationships[key] = true
-				evidence.Relationships = append(evidence.Relationships, rel)
-			}
-		}
-	}
-	return i.bound(evidence)
+	return properties, false
 }

@@ -11,45 +11,29 @@ import (
 	"tpt-graph/query-workspace/internal/workspace"
 )
 
-func recordChatResponse(d *modeldiag.Chat, request *modeldiag.ChatRequest, response *genai.GenerateContentResponse, err error) {
-	if len(request.Attempts) > 0 {
-		request.HTTPStatus = request.Attempts[len(request.Attempts)-1].HTTPStatus
-	}
+func recordChatResponse(d *modeldiag.Chat, response *genai.GenerateContentResponse, err error) {
 	var apiError genai.APIError
 	if errors.As(err, &apiError) {
-		request.HTTPStatus, request.APIStatus = apiError.Code, apiError.Status
+		d.HTTPStatus, d.APIStatus = apiError.Code, apiError.Status
 	}
 	if response != nil {
-		request.ModelVersion, request.ResponseID = response.ModelVersion, response.ResponseID
+		d.ModelVersion, d.ResponseID = response.ModelVersion, response.ResponseID
 		candidateCount := len(response.Candidates)
-		request.CandidateCount = &candidateCount
+		d.CandidateCount = &candidateCount
 		if len(response.Candidates) > 0 && response.Candidates[0] != nil {
-			request.FinishReason = string(response.Candidates[0].FinishReason)
+			d.FinishReason = string(response.Candidates[0].FinishReason)
 		}
 		if response.PromptFeedback != nil {
-			request.BlockReason = string(response.PromptFeedback.BlockReason)
+			d.BlockReason = string(response.PromptFeedback.BlockReason)
 		}
 		if usage := response.UsageMetadata; usage != nil {
-			request.Usage = &modeldiag.Usage{
+			d.Usage = &modeldiag.Usage{
 				PromptTokens: usage.PromptTokenCount, OutputTokens: usage.CandidatesTokenCount,
 				ThinkingTokens: usage.ThoughtsTokenCount, CachedTokens: usage.CachedContentTokenCount,
 				ToolTokens: usage.ToolUsePromptTokenCount, TotalTokens: usage.TotalTokenCount,
 			}
-			if d.Usage == nil {
-				d.Usage = &modeldiag.Usage{}
-			}
-			d.Usage.PromptTokens += request.Usage.PromptTokens
-			d.Usage.OutputTokens += request.Usage.OutputTokens
-			d.Usage.ThinkingTokens += request.Usage.ThinkingTokens
-			d.Usage.CachedTokens += request.Usage.CachedTokens
-			d.Usage.ToolTokens += request.Usage.ToolTokens
-			d.Usage.TotalTokens += request.Usage.TotalTokens
-			d.UsageRequests++
 		}
 	}
-	d.HTTPStatus, d.APIStatus = request.HTTPStatus, request.APIStatus
-	d.ModelVersion, d.ResponseID = request.ModelVersion, request.ResponseID
-	d.CandidateCount, d.FinishReason, d.BlockReason = request.CandidateCount, request.FinishReason, request.BlockReason
 }
 
 func chatFailure(kind, message string, cause error) error {

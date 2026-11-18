@@ -168,7 +168,7 @@ func (b *browserSession) view() sessionView {
 func (b *browserSession) measure() int {
 	size := 256
 	if diagnostics := b.chatDiagnostics; diagnostics != nil {
-		size += 4096 + 512*len(diagnostics.Requests) + 256*len(diagnostics.Attempts) + 128*diagnostics.LookupCount
+		size += 4096 + 256*len(diagnostics.Attempts)
 	}
 	for _, turn := range b.chat {
 		size += len(turn.Question) + len(turn.Reply.Text) + 256
