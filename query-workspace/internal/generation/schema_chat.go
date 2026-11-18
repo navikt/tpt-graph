@@ -21,6 +21,7 @@ const (
 	chatMaxOutputTokens = 16384
 	chatMaxLookups      = 24
 	chatPromptVersion   = "1"
+	chatThinkingLevel   = genai.ThinkingLevelMedium
 )
 
 const schemaChatPrompt = `You help users discover the schema of their Cartography Neo4j database.
@@ -48,7 +49,7 @@ func (g *VertexGenerator) Chat(ctx context.Context, history []schema.Turn, quest
 		attribute.String("gen_ai.operation.name", "generate_content"),
 		attribute.String("gen_ai.request.model", g.chatModel),
 		attribute.String("cloud.region", g.location),
-		attribute.String("gen_ai.request.thinking_level", string(genai.ThinkingLevelHigh)))
+		attribute.String("gen_ai.request.thinking_level", string(chatThinkingLevel)))
 	defer func() { end(chatErr) }()
 	started := time.Now()
 	network := &networkDiagnostics{}
@@ -56,7 +57,7 @@ func (g *VertexGenerator) Chat(ctx context.Context, history []schema.Turn, quest
 	diagnostics := &modeldiag.Chat{
 		Diagnostics: modeldiag.Diagnostics{
 			Model: g.chatModel, Location: g.location, PromptVersion: chatPromptVersion,
-			ThinkingLevel: string(genai.ThinkingLevelHigh), MaxOutputTokens: chatMaxOutputTokens,
+			ThinkingLevel: string(chatThinkingLevel), MaxOutputTokens: chatMaxOutputTokens,
 			TimeoutSeconds: int(generationTimeout.Seconds()), QuestionBytes: len(question),
 			SystemBytes: len(schemaChatPrompt), Outcome: "success",
 		},
@@ -139,7 +140,7 @@ func (g *VertexGenerator) Chat(ctx context.Context, history []schema.Turn, quest
 	config := &genai.GenerateContentConfig{
 		SystemInstruction: genai.NewContentFromText(schemaChatPrompt, genai.RoleUser),
 		MaxOutputTokens:   chatMaxOutputTokens,
-		ThinkingConfig:    &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelHigh},
+		ThinkingConfig:    &genai.ThinkingConfig{ThinkingLevel: chatThinkingLevel},
 		Tools: []*genai.Tool{{FunctionDeclarations: []*genai.FunctionDeclaration{
 			schemaFunction("search_schema", "Search schema labels, property names and relationship types by a case-insensitive substring. Results are bounded; narrow truncated searches.", "query"),
 			schemaFunction("inspect_node", "Inspect an exact label with its property types and inferred directed relationships. Results are bounded.", "name"),

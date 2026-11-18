@@ -48,8 +48,8 @@ func TestSchemaChatExploresMetadataWithToolsWithoutFullSchemaPrompt(t *testing.T
 			declared.Tools[0].FunctionDeclarations[1].Name != "inspect_node" {
 			t.Error("chat must expose only the two metadata tools")
 		}
-		if !strings.Contains(string(body), `"thinkingLevel":"HIGH"`) {
-			t.Errorf("chat must prioritize reasoning quality: %s", body)
+		if !strings.Contains(string(body), `"thinkingLevel":"MEDIUM"`) {
+			t.Error("chat must use medium thinking on every model request")
 		}
 		if !strings.Contains(string(body), `"maxOutputTokens":16384`) {
 			t.Error("chat must reserve room for reasoning and the final answer")
@@ -90,7 +90,7 @@ func TestSchemaChatExploresMetadataWithToolsWithoutFullSchemaPrompt(t *testing.T
 		t.Fatalf("ungrounded or incomplete answer: requests=%d reply=%#v", requests, reply)
 	}
 	d := reply.Diagnostics
-	if d == nil || d.Outcome != "success" || d.LookupCount != 2 || d.HistoryTurns != 1 || len(d.Requests) != 3 ||
+	if d == nil || d.ThinkingLevel != "MEDIUM" || d.Outcome != "success" || d.LookupCount != 2 || d.HistoryTurns != 1 || len(d.Requests) != 3 ||
 		len(d.Attempts) != 3 || d.DurationMS <= 0 || d.SchemaCaptured == nil || !d.SchemaCaptured.Equal(captured) {
 		t.Fatalf("missing chat diagnostics: %#v", d)
 	}

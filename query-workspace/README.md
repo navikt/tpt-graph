@@ -160,14 +160,14 @@ Query generation and chat use independent model settings:
 | Workload | Model variable | Default | Thinking | Maximum output tokens per request |
 |---|---|---|---|---|
 | Query generation | `VERTEX_MODEL` | `gemini-3.8-flash` | LOW | 4,096 |
-| Schema chat | `VERTEX_CHAT_MODEL` | `gemini-3.8-flash` | HIGH | 16,384 |
+| Schema chat | `VERTEX_CHAT_MODEL` | `gemini-3.8-flash` | MEDIUM | 16,384 |
 
 Changing `VERTEX_MODEL` does not change the chat model. Both workloads retain
 the 45-second deadline; for chat this covers all model and tool rounds, not
 each request. Chat has a separate, larger token budget to accommodate reasoning
 and its final answer; displayed answers remain limited to 16,000 bytes.
-HIGH thinking prioritizes reasoning quality, not lower latency, and can increase
-token use and cost. It does not guarantee a better answer or fewer requests.
+Chat uses MEDIUM thinking to balance reasoning depth and latency. It does not
+guarantee faster answers, better quality or fewer requests.
 No live-model quality or latency comparison is established by the automated
 tests, which use synthetic metadata and a local fake provider.
 
