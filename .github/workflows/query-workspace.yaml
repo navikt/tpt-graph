@@ -24,7 +24,7 @@ jobs:
           team: appsec
           image_suffix: -query-workspace
           docker_context: query-workspace
-      - uses: nais/deploy/actions/deploy@7b60caaded00332e9aa117a8342daa0876851dfe # ratchet:nais/deploy/actions/deploy@v2
+      - uses: nais/deploy/actions/deploy@6fe576e10c7a325643bad96566bd6cb180a2f782 # ratchet:nais/deploy/actions/deploy@v2
         env:
           RESOURCE: .nais/query-workspace.yaml
           CLUSTER: prod-gcp
